@@ -1,0 +1,78 @@
+# 狀態列屬性 / 欄位資訊大全
+
+leon-statusline 顯示什麼、資料從哪來、什麼條件下才顯示。技術名詞 / JSON key 保留英文。
+
+> 資料來源 = Claude Code 在每次更新時，把整個 session 狀態以**單一 JSON 物件**透過 **stdin** 餵給狀態列腳本。腳本印到 **stdout** 就是顯示內容。**全程在本機跑、不消耗任何模型 token。**
+
+---
+
+## 版面總覽（4 行）
+```
+~/…/Project_01  Opus effort:high think:on  token:15.5k  ██████████░░░░░░░░░░ 42%  session:my-session
+repo:claude-code  worktree:feat-x  git:main +2 ~1 ↑1↓2  +156 -23  PR:#1234 pending
+api:<1m  wall:14m  cost:$0.42  5h:24%(reset 1h23m)  7d:41%(reset 5d4h)
+CLAUDE.md:7  memory:5  mcp:3  agent:1  skill:2  hook:13  plugin:2  workflow:1
+```
+
+## 條件顯示規則
+- 每個 attribute **連同其標題**（如整串 `token:15.5k`）是一個單位：抓不到 / 不存在 / 不適用 → **整個單位隱藏**。
+- **整行所有 attribute 都缺時，該行才整行消失**。
+- 非 Pro/Max → `5h` `7d` 隱藏；session 未命名 → `session` 隱藏；不在 git repo → 第 2 行多數隱藏。
+
+---
+
+## 第 1 行（identity / context）
+| attribute | 來源 JSON | 格式 | 條件 |
+|---|---|---|---|
+| 目錄 | `workspace.current_dir` | 家目錄→`~`；超 3 段收 `…` 留最後 2 段 | 永遠 |
+| 模型 | `model.display_name` | 原文 | 永遠 |
+| `effort:` | `effort.level` | low/medium/high/xhigh/max | 模型支援 effort 時 |
+| `think:` | `thinking.enabled` | `on` | 僅為 true |
+| `token:` | `context_window.total_input_tokens` | `15.5k`（1 位小數 k）| 有才顯示 |
+| context bar | `context_window.used_percentage` | 20 格 `█/░` + ` NN%`，綠→黃→紅平滑漸層 | 有才顯示 |
+| `session:` | `session_name` | 原文 | 命名過才有（`--name` / `/rename`）|
+
+## 第 2 行（repo / git）
+| attribute | 來源 | 格式 | 條件 |
+|---|---|---|---|
+| `repo:` | `workspace.repo.name` | 原文 | 有 git remote |
+| `worktree:` | `workspace.git_worktree` | 原文 | 在 linked worktree |
+| `git:` | git CLI（`--no-optional-locks`）| `<branch> +<staged> ~<modified> ↑<ahead>↓<behind>`；無變動顯示 `clean`；ahead/behind 為 0 省略 | 在 git repo |
+| 增刪行 | `cost.total_lines_added` / `total_lines_removed` | `+156 -23` | 有才顯示 |
+| `PR:` | `pr.number` / `pr.review_state` | `#1234 pending`（approved/pending/changes_requested/draft）| 當前分支有 open PR |
+
+## 第 3 行（time / cost / rate）
+| attribute | 來源 | 格式 | 條件 |
+|---|---|---|---|
+| `api:` | `cost.total_api_duration_ms` | 連接非零單位至分鐘；<1 分 `<1m` | 有才顯示 |
+| `wall:` | `cost.total_duration_ms`（**含閒置**）| `14m` / `2h5m` / `1d3h5m` | 有才顯示 |
+| `cost:` | `cost.total_cost_usd` | `$0.42`（2 位小數）| 有才顯示 |
+| `5h:` | `rate_limits.five_hour.used_percentage` / `resets_at` | `24%(reset 1h23m)` | 僅 Pro/Max、首次 API 回應後 |
+| `7d:` | `rate_limits.seven_day.used_percentage` / `resets_at` | `41%(reset 5d4h)` | 僅 Pro/Max |
+
+> `api` 是「等 Claude 回應」的累計時間，通常遠小於 `wall`（你大多在讀/打字）；`wall` 是 session 開始至今的真實時間（含發呆）。
+
+## 第 4 行（基礎設施數量，範圍：只算專案＋user 自訂）
+| attribute | 怎麼算 |
+|---|---|
+| `CLAUDE.md:` | 遞迴掃專案樹的 `CLAUDE.md`（排除 .git/node_modules/vendor/.venv/dist/build）|
+| `memory:` | 本 session memory 目錄 `*.md`（含 `MEMORY.md`）|
+| `mcp:` | `~/.claude.json` + 專案 `.mcp.json` 的 server 數（**已設定數**，非連線）|
+| `agent:` | `.claude/agents/` + `~/.claude/agents/` 的 `*.md` |
+| `skill:` | `.claude/skills/` + `~/.claude/skills/` 含 `SKILL.md` 的子目錄 |
+| `hook:` | 合併 user+專案 settings 的 `hooks` 區塊**註冊條目數** |
+| `plugin:` | settings `enabledPlugins` 的已啟用數 |
+| `workflow:` | `.claude/workflows/` + `~/.claude/workflows/` 的 `*.js` |
+
+> 第 4 行每 session 算一次快取（TTL 60s）；第 2 行 git 快取 TTL 2s。快取 key 用 `session_id`。
+
+---
+
+## ❌ 拿不到（刻意不放，避免假資料）
+- MCP **實際連線**狀態（執行期狀態；要背景 spawn `claude mcp list`，且抓不到內建橋接）
+- skill / hook **本次觸發次數**（執行期狀態）
+- 內建 agent / tool 列舉（寫死在程式內）
+- repo public/private（要 `gh`/GitHub API，破壞零依賴）
+
+## 其他 JSON 可用欄位（本 plugin 未用，但存在）
+`cwd`、`session_id`、`transcript_path`、`version`、`workspace.project_dir`、`workspace.added_dirs`、`workspace.repo.{host,owner}`、`output_style.name`、`exceeds_200k_tokens`、`context_window.{context_window_size,remaining_percentage,current_usage.*}`、`vim.mode`、`agent.name`、`worktree.*`。完整定義見 `research/CC_statusline_config_research.md`。
