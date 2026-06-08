@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, writeFileSync, readFileSync, existsSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { targetPath, mergeStatusLine, applySetup } from '../setup.mjs'
+import { targetPath, mergeStatusLine, applySetup, isOurs, applySync } from '../setup.mjs'
 
 let dir
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'lsls-')) })
@@ -49,5 +49,49 @@ describe('applySetup', () => {
     const r = applySetup(f, 'node new', false)
     expect(r.written).toBe(true)
     expect(JSON.parse(readFileSync(f, 'utf8')).statusLine.command).toBe('node new')
+  })
+})
+
+describe('isOurs', () => {
+  it('true for leon-statusline plugin path', () =>
+    expect(isOurs('node "/x/plugins/cache/leon-statusline-marketplace/leon-statusline/1.0.0/statusline.mjs"')).toBe(true))
+  it('false for unrelated command', () =>
+    expect(isOurs('node "/home/me/custom.sh"')).toBe(false))
+  it('false for null', () => expect(isOurs(null)).toBe(false))
+})
+
+describe('applySync', () => {
+  it('updates when ours and stale, backs up, preserves keys', () => {
+    const f = join(dir, 'settings.json')
+    writeFileSync(f, JSON.stringify({
+      keep: 1,
+      statusLine: { type: 'command', command: 'node "/p/leon-statusline/1.0.0/statusline.mjs"', refreshInterval: 10 },
+    }))
+    const desired = 'node "/p/leon-statusline/1.1.0/statusline.mjs"'
+    const r = applySync(f, desired)
+    expect(r.updated).toBe(true)
+    expect(existsSync(r.backup)).toBe(true)
+    const after = JSON.parse(readFileSync(f, 'utf8'))
+    expect(after.statusLine.command).toBe(desired)
+    expect(after.statusLine.refreshInterval).toBe(10)
+    expect(after.keep).toBe(1)
+  })
+  it('no-op when already current', () => {
+    const f = join(dir, 'settings.json')
+    const desired = 'node "/p/leon-statusline/1.1.0/statusline.mjs"'
+    writeFileSync(f, JSON.stringify({ statusLine: { type: 'command', command: desired } }))
+    expect(applySync(f, desired).updated).toBe(false)
+  })
+  it('no-op when statusLine is not ours', () => {
+    const f = join(dir, 'settings.json')
+    writeFileSync(f, JSON.stringify({ statusLine: { type: 'command', command: 'node "/home/me/custom.mjs"' } }))
+    expect(applySync(f, 'node "/p/leon-statusline/1.1.0/statusline.mjs"').updated).toBe(false)
+    expect(JSON.parse(readFileSync(f, 'utf8')).statusLine.command).toBe('node "/home/me/custom.mjs"')
+  })
+  it('no-op when no statusLine / missing file', () => {
+    const f = join(dir, 'settings.json')
+    writeFileSync(f, JSON.stringify({ other: 1 }))
+    expect(applySync(f, 'node x').updated).toBe(false)
+    expect(applySync(join(dir, 'nope.json'), 'node x').updated).toBe(false)
   })
 })
