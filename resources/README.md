@@ -8,7 +8,7 @@
 - [technical-decisions.md](./technical-decisions.md) — 技術選型與每個關鍵決策的理由（含被否決的方案）
 - [pitfalls.md](./pitfalls.md) — 開發中踩過的坑、症狀、根因與解法
 - [statusline-attributes.md](./statusline-attributes.md) — 狀態列所有屬性 / 欄位資訊大全
-- [research/](./research/) — 開發前的調研資料（4 份）
+- [research/](./research/) — 開發前的調研資料（5 份）
 
 ## research/ 內容
 | 檔案 | 主題 |
@@ -17,3 +17,4 @@
 | `CC_statusline_crossplatform_impl_research.md` | 跨平台實作：MCP 偵測、路徑陷阱、runtime、永不崩潰、計數位置 |
 | `CC_create_plugins_official_guide.md` | 官方「建立 plugin」指南 |
 | `CC-hooks.md` | Claude Code hooks 參考 |
+| `CC-skills.md` | Claude Code skills 參考 |
