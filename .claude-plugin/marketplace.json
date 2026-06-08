@@ -1,0 +1,11 @@
+{
+  "name": "leon-statusline-marketplace",
+  "owner": { "name": "leon13018" },
+  "plugins": [
+    {
+      "name": "leon-statusline",
+      "source": "./leon-statusline",
+      "description": "Cross-platform 4-line status line"
+    }
+  ]
+}
