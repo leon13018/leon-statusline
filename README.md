@@ -6,6 +6,6 @@
 ```
 /plugin marketplace add leon13018/leon-statusline
 /plugin install leon-statusline
-/leon-statusline:setup-statusline user
+/leon-statusline:setup-statusline user        # user / project / local
 ```
 需要機器上有 Node.js。詳見 [plugin README](./leon-statusline/README.md)。
