@@ -7,10 +7,11 @@ const entry = join(dirname(fileURLToPath(import.meta.url)), '..', 'statusline.mj
 const run = stdin => spawnSync('node', [entry], { input: stdin, encoding: 'utf8' })
 
 describe('statusline entry (never crash)', () => {
-  it('valid input -> exit 0, non-empty', () => {
+  it('valid input -> exit 0, 4 lines', () => {
     const r = run(JSON.stringify({ model: { display_name: 'Opus' }, workspace: { current_dir: '/tmp/x' } }))
     expect(r.status).toBe(0)
     expect(r.stdout.length).toBeGreaterThan(0)
+    expect(r.stdout.split('\n').length).toBe(4)
   })
   it('empty input -> exit 0', () => {
     const r = run('')

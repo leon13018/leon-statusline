@@ -94,10 +94,16 @@ describe('renderLine4', () => {
 })
 
 describe('buildOutput', () => {
-  it('drops fully-empty lines, joins with newline', () => {
+  it('renders 4 non-empty lines', () => {
     const out = buildOutput({ model: { display_name: 'Opus' }, workspace: { current_dir: '/home/leon/p' } }, deps)
     const lines = strip(out).split('\n')
+    expect(lines.length).toBe(4)
     expect(lines[0]).toContain('Opus')
+    expect(lines.every(l => l.length > 0)).toBe(true)
+  })
+  it('empty d 仍輸出完整 4 行（never hide）', () => {
+    const lines = strip(buildOutput({}, deps)).split('\n')
+    expect(lines.length).toBe(4)
     expect(lines.every(l => l.length > 0)).toBe(true)
   })
 })
