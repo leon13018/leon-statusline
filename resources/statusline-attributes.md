@@ -14,10 +14,11 @@ api:<1m  wall:14m  cost:$0.42  5h:24%(reset 1h23m)  7d:41%(reset 5d4h)
 CLAUDE.md:7  memory:5  mcp:3  agent:1  skill:2  hook:13  plugin:2  workflow:1
 ```
 
-## 條件顯示規則
-- 每個 attribute **連同其標題**（如整串 `token:15.5k`）是一個單位：抓不到 / 不存在 / 不適用 → **整個單位隱藏**。
-- **整行所有 attribute 都缺時，該行才整行消失**。
-- 非 Pro/Max → `5h` `7d` 隱藏；session 未命名 → `session` 隱藏；不在 git repo → 第 2 行多數隱藏。
+## 顯示規則（永不隱藏，v1.2.0 起）
+- 每個 attribute **連同其標題**永遠顯示，從不隱藏；整行也永遠存在（共 4 行）。
+- **讀到值（包含真實的 `0`）** → 顯示真值（如 `token:0.0k`、`cost:$0.00`、`5h:0%`、`git:main clean`、`+0 -0`），維持元素原色。
+- **沒抓到 / 不適用** → 名稱類顯示 `none`（model/session/repo/worktree/PR/git 不在 repo），數值類顯示 `n/a`（目錄/effort/token/context bar/api/wall/cost/5h/7d），且一律 **DIM 灰**——灰色專指「沒資料」，與真實 0 用文字＋顏色雙重區分。
+- 例外：`think` 永遠 `on`/`off`；第 4 行計數 `0` 即「真的數到 0」。
 
 ---
 
