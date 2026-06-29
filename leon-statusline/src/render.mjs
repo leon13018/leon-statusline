@@ -58,18 +58,18 @@ export function renderLine3(d, deps) {
   const c = d.cost || {}
   const rl = d.rate_limits || {}
   const now = deps.now()
-  const rlStr = (label, obj) => {
-    if (!obj || obj.used_percentage == null) return ''
+  const rlPart = (label, obj) => {
+    if (!obj || obj.used_percentage == null) return colorize(`${label}n/a`, DIM)
     const cd = obj.resets_at ? resetCountdown(obj.resets_at, now) : ''
     const val = `${Math.round(obj.used_percentage)}%${cd ? `(reset ${cd})` : ''}`
     return colorize(`${label}${val}`, tierColor(obj.used_percentage))
   }
   const parts = [
-    attr('api:', c.total_api_duration_ms != null ? fmtDuration(c.total_api_duration_ms) : '', DIM),
-    attr('wall:', c.total_duration_ms != null ? fmtDuration(c.total_duration_ms) : '', DIM),
-    attr('cost:', c.total_cost_usd != null ? `$${c.total_cost_usd.toFixed(2)}` : '', YELLOW),
-    rlStr('5h:', rl.five_hour),
-    rlStr('7d:', rl.seven_day),
+    field('api:', c.total_api_duration_ms != null ? fmtDuration(c.total_api_duration_ms) : null, DIM, 'n/a'),
+    field('wall:', c.total_duration_ms != null ? fmtDuration(c.total_duration_ms) : null, DIM, 'n/a'),
+    field('cost:', c.total_cost_usd != null ? `$${c.total_cost_usd.toFixed(2)}` : null, YELLOW, 'n/a'),
+    rlPart('5h:', rl.five_hour),
+    rlPart('7d:', rl.seven_day),
   ]
   return joinLine(parts)
 }

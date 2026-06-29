@@ -57,19 +57,31 @@ describe('renderLine2 (never hide)', () => {
   })
 })
 
-describe('renderLine3', () => {
-  it('hides rate limits when absent; api <1m', () => {
+describe('renderLine3 (never hide)', () => {
+  it('absent rate -> 5h/7d n/a；api/wall/cost 真值', () => {
     const d = { cost: { total_api_duration_ms: 3000, total_duration_ms: 14 * 60000, total_cost_usd: 0.42 } }
     const out = strip(renderLine3(d, deps))
     expect(out).toContain('api:<1m')
     expect(out).toContain('wall:14m')
     expect(out).toContain('cost:$0.42')
-    expect(out).not.toContain('5h:')
+    expect(out).toContain('5h:n/a')
+    expect(out).toContain('7d:n/a')
   })
-  it('shows rate limits with countdown for Pro/Max', () => {
+  it('Pro/Max rate 帶倒數', () => {
     const d = { rate_limits: { five_hour: { used_percentage: 24, resets_at: 1000 + 3600 + 23 * 60 } } }
+    expect(strip(renderLine3(d, deps))).toContain('5h:24%(reset 1h23m)')
+  })
+  it('無 cost -> api/wall/cost n/a（沒抓到）', () => {
+    const out = strip(renderLine3({}, deps))
+    expect(out).toContain('api:n/a')
+    expect(out).toContain('wall:n/a')
+    expect(out).toContain('cost:n/a')
+  })
+  it('真 0% rate -> 0%，非 n/a', () => {
+    const d = { rate_limits: { five_hour: { used_percentage: 0, resets_at: 1000 + 60 } } }
     const out = strip(renderLine3(d, deps))
-    expect(out).toContain('5h:24%(reset 1h23m)')
+    expect(out).toContain('5h:0%')
+    expect(out).not.toContain('5h:n/a')
   })
 })
 
