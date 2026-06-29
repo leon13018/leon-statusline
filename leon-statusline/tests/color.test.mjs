@@ -17,8 +17,13 @@ describe('gradientColor', () => {
 })
 
 describe('gradientBar', () => {
-  it('returns empty for null pct', () => {
-    expect(gradientBar(null)).toBe('')
+  it('null pct -> empty bar + n/a (沒抓到)', () => {
+    const out = strip(gradientBar(null, 10))
+    expect(out).toBe('░░░░░░░░░░ n/a')
+    expect(out).not.toContain('█')
+  })
+  it('real 0 pct -> empty bar + 0% (讀到真 0，非 n/a)', () => {
+    expect(strip(gradientBar(0, 10))).toBe('░░░░░░░░░░ 0%')
   })
   it('renders width blocks + percent suffix', () => {
     const out = strip(gradientBar(50, 10))

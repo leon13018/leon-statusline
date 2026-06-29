@@ -14,8 +14,8 @@ export function gradientColor(t) {
 }
 
 export function gradientBar(pct, width = 20) {
-  if (pct == null || !Number.isFinite(pct)) return ''
-  const p = Math.max(0, Math.min(100, pct))
+  const known = pct != null && Number.isFinite(pct)
+  const p = known ? Math.max(0, Math.min(100, pct)) : 0
   const filled = Math.round((p / 100) * width)
   let bar = ''
   for (let i = 0; i < width; i++) {
@@ -26,5 +26,5 @@ export function gradientBar(pct, width = 20) {
       bar += colorize('░', [60, 60, 60])
     }
   }
-  return `${bar} ${Math.round(p)}%`
+  return `${bar} ${known ? `${Math.round(p)}%` : 'n/a'}`
 }
