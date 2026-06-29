@@ -34,14 +34,26 @@ describe('renderLine1 (never hide)', () => {
   })
 })
 
-describe('renderLine2 (conditional)', () => {
-  it('hides absent repo/worktree/PR, shows git + lines', () => {
+describe('renderLine2 (never hide)', () => {
+  it('absent repo/worktree/PR -> none；git + lines 真值', () => {
     const d = { cost: { total_lines_added: 156, total_lines_removed: 23 } }
-    const out = strip(renderLine2(d, deps))
+    const raw = renderLine2(d, deps)
+    const out = strip(raw)
     expect(out).toContain('git:main +2 ~1 ↑1')
     expect(out).toContain('+156 -23')
-    expect(out).not.toContain('repo:')
-    expect(out).not.toContain('PR:')
+    expect(out).toContain('repo:none')
+    expect(out).toContain('worktree:none')
+    expect(out).toContain('PR:none')
+    expect(raw).toContain(DIM + 'repo:none')
+  })
+  it('不在 git repo -> git:none (DIM)', () => {
+    const noGit = { ...deps, git: () => null }
+    const raw = renderLine2({}, noGit)
+    expect(strip(raw)).toContain('git:none')
+    expect(raw).toContain(DIM + 'git:none')
+  })
+  it('無 cost -> 增刪行 n/a（沒抓到）', () => {
+    expect(strip(renderLine2({}, deps))).toContain('n/a')
   })
 })
 

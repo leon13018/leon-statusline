@@ -30,23 +30,26 @@ export function renderLine1(d, deps) {
 
 export function renderLine2(d, deps) {
   const g = deps.git(d.workspace?.current_dir)
-  let gitStr = ''
+  let gitPart
   if (g) {
     const status = (g.staged || g.modified) ? `+${g.staged} ~${g.modified}` : 'clean'
     const ab = `${g.ahead ? `↑${g.ahead}` : ''}${g.behind ? `↓${g.behind}` : ''}`
-    gitStr = [g.branch, status, ab].filter(Boolean).join(' ')
+    const gitStr = [g.branch, status, ab].filter(Boolean).join(' ')
+    gitPart = colorize('git:' + gitStr, (g.staged || g.modified) ? YELLOW : GREEN)
+  } else {
+    gitPart = colorize('git:none', DIM)
   }
   const c = d.cost || {}
-  const lines = (c.total_lines_added != null || c.total_lines_removed != null)
-    ? `+${c.total_lines_added || 0} -${c.total_lines_removed || 0}`
-    : ''
-  const pr = d.pr ? `#${d.pr.number} ${d.pr.review_state || ''}`.trim() : ''
+  const linesPart = (c.total_lines_added != null || c.total_lines_removed != null)
+    ? colorize(`+${c.total_lines_added || 0} -${c.total_lines_removed || 0}`, DIM)
+    : colorize('n/a', DIM)
+  const pr = d.pr ? `#${d.pr.number} ${d.pr.review_state || ''}`.trim() : null
   const parts = [
-    attr('repo:', d.workspace?.repo?.name, DIM),
-    attr('worktree:', d.workspace?.git_worktree, DIM),
-    gitStr ? colorize('git:' + gitStr, g.staged || g.modified ? YELLOW : GREEN) : '',
-    lines ? colorize(lines, DIM) : '',
-    attr('PR:', pr, YELLOW),
+    field('repo:', d.workspace?.repo?.name, DIM, 'none'),
+    field('worktree:', d.workspace?.git_worktree, DIM, 'none'),
+    gitPart,
+    linesPart,
+    field('PR:', pr, YELLOW, 'none'),
   ]
   return joinLine(parts)
 }
