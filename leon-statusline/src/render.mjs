@@ -6,18 +6,24 @@ const GREEN = [0, 200, 80], YELLOW = [220, 200, 0], RED = [220, 40, 40], CYAN = 
 
 const tierColor = p => (p >= 90 ? RED : p >= 70 ? YELLOW : GREEN)
 
+// 永不隱藏：讀到值（非 null/空）→ label+value 上 color；沒抓到 → label+placeholder 上 DIM
+const field = (label, value, color, placeholder) =>
+  (value == null || value === '')
+    ? colorize(`${label}${placeholder}`, DIM)
+    : colorize(`${label}${value}`, color)
+
 export function renderLine1(d, deps) {
   const cw = d.context_window || {}
-  const model = d.model?.display_name
+  const dir = d.workspace?.current_dir
   const tok = cw.total_input_tokens
   const parts = [
-    d.workspace?.current_dir ? colorize(shortPath(d.workspace.current_dir, deps.home), BLUE) : '',
-    model ? colorize(model, MAGENTA) : '',
-    attr('effort:', d.effort?.level, DIM),
-    d.thinking?.enabled ? attr('think:', 'on', DIM) : '',
-    attr('token:', tok != null ? `${(tok / 1000).toFixed(1)}k` : '', DIM),
+    field('', dir ? shortPath(dir, deps.home) : null, BLUE, 'n/a'),
+    field('', d.model?.display_name, MAGENTA, 'none'),
+    field('effort:', d.effort?.level, DIM, 'n/a'),
+    colorize('think:' + (d.thinking?.enabled ? 'on' : 'off'), DIM),
+    field('token:', tok != null ? `${(tok / 1000).toFixed(1)}k` : null, DIM, 'n/a'),
     gradientBar(cw.used_percentage),
-    attr('session:', d.session_name, DIM),
+    field('session:', d.session_name, DIM, 'none'),
   ]
   return joinLine(parts)
 }

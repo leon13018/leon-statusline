@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { renderLine2, renderLine3, renderLine4, buildOutput } from '../src/render.mjs'
+import { renderLine1, renderLine2, renderLine3, renderLine4, buildOutput } from '../src/render.mjs'
 
 const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '')
 
@@ -9,6 +9,30 @@ const deps = {
   git: () => ({ branch: 'main', staged: 2, modified: 1, ahead: 1, behind: 0 }),
   counts: () => ({ claudeMd: 7, memory: 5, mcp: 3, agent: 1, skill: 2, hook: 13, plugin: 2, workflow: 1 }),
 }
+
+const DIM = '\x1b[38;2;130;130;130m'
+
+describe('renderLine1 (never hide)', () => {
+  it('empty d -> 佔位（沒抓到）', () => {
+    const raw = renderLine1({}, deps)
+    const out = strip(raw)
+    expect(out).toContain('none')          // model
+    expect(out).toContain('effort:n/a')
+    expect(out).toContain('think:off')
+    expect(out).toContain('token:n/a')
+    expect(out).toContain('session:none')
+    expect(out).toContain('n/a')           // bar / dir 佔位
+    expect(raw).toContain(DIM + 'effort:n/a')   // 佔位是 DIM
+    expect(raw).toContain(DIM + 'session:none')
+  })
+  it('真 0 token & pct -> 真值，非 n/a', () => {
+    const d = { context_window: { total_input_tokens: 0, used_percentage: 0 } }
+    const out = strip(renderLine1(d, deps))
+    expect(out).toContain('token:0.0k')
+    expect(out).toContain('0%')
+    expect(out).not.toContain('token:n/a')
+  })
+})
 
 describe('renderLine2 (conditional)', () => {
   it('hides absent repo/worktree/PR, shows git + lines', () => {
