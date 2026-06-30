@@ -51,9 +51,15 @@ if (process.argv[1] && process.argv[1].endsWith('setup.mjs')) {
   const command = `node "${join(root, 'statusline.mjs')}"`
   if (process.argv.includes('--sync')) {
     // SessionStart hook 用：靜默（stdout 會被當成 session context 注入），跨 scope 自動重指
+    // --report：給 resync-statusline skill 用，逐 scope 印出結果
+    const report = process.argv.includes('--report')
+    const results = []
     for (const scope of ['user', 'project', 'local']) {
-      try { applySync(targetPath(scope), command) } catch {}
+      let r
+      try { r = applySync(targetPath(scope), command) } catch { r = { updated: false, status: 'absent' } }
+      results.push({ scope, ...r })
     }
+    if (report) process.stdout.write(JSON.stringify(results))
   } else {
     const scope = arg('--scope', 'user')
     const force = process.argv.includes('--force')
