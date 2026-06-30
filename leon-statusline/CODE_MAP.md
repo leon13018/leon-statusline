@@ -15,14 +15,14 @@
 
 ## src/（純函式邏輯，可獨立測）
 - `color.mjs` — `colorize` / `gradientColor` / `gradientBar`（truecolor 平滑漸層）
-- `compact.mjs` — `autoCompactThreshold`（env `CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE` 否則 95）/ `autoCompactPct`（used 對門檻換算，給第 1 行 bar）
+- `compact.mjs` — `autoCompactThreshold`（env `CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE` 否則 95）/ `autoCompactWindow`（從 settings 取真實 token 視窗）/ `autoCompactPct`（token 視窗優先、否則近似，給第 1 行 bar）
 - `format.mjs` — `fmtDuration` / `resetCountdown` / `shortPath` / `attr`（條件顯示單位）/ `joinLine`
 - `input.mjs` — `parseInput`（容錯 JSON）
 - `cache.mjs` — `cacheDir` / `withCache`（`session_id` key、TTL、never-throw）
 - `git.mjs` — `gitInfo`（branch/staged/modified/ahead/behind；可注入 runner 供測試）
-- `count.mjs` — `countInfra` + `countClaudeMd`/`countDirFiles`/`countSkillDirs`/`countMemory`/`countHooks`/`countEnabledPlugins`/`countMcp`/`memoryDirFor`
+- `count.mjs` — `countInfra` + `countClaudeMd`/`countDirFiles`/`countSkillDirs`/`countMemory`/`countHooks`/`countEnabledPlugins`/`countMcp`/`memoryDirFor`；export `readJson`（給進入點讀 settings 共用）
 - `render.mjs` — `renderLine1..4` / `buildOutput`（套條件顯示 + 顏色）
 
-## tests/（Vitest，55 測試）
+## tests/（Vitest，79 測試）
 - `color` / `format` / `input` / `cache` / `git` / `count` / `render` / `integration` / `setup` `.test.mjs`
 - `integration.test.mjs` 以子程序跑進入點，驗「空/壞 JSON/缺欄位 → exit 0 且至少一行」

@@ -30,7 +30,7 @@ CLAUDE.md:7  memory:5  mcp:3  agent:1  skill:2  hook:13  plugin:2  workflow:1
 | `effort:` | `effort.level` | low/medium/high/xhigh/max | 模型支援 effort 時 |
 | `think:` | `thinking.enabled` | `on` | 僅為 true |
 | `token:` | `context_window.total_input_tokens` | `15.5k`（1 位小數 k）| 有才顯示 |
-| context bar（auto-compact %）| `context_window.used_percentage` | `compact` + 20 格 `█/░` + ` NN%`；NN = used ÷ 門檻 × 100，綠→紅；門檻取 env `CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE`，否則預設 95%（**近似**：CC 未公開門檻、`autoCompactWindow` 假設＝`context_window_size`）| 永遠（永不隱藏）|
+| context bar（auto-compact %）| `context_window.total_input_tokens` ＋ `~/.claude/settings.json` 的 `autoCompactWindow` | `compact` + 20 格 `█/░` + ` NN%`，綠→紅；**有 `autoCompactWindow`（tokens，`/autocompact` 設定值）** → NN = total_input_tokens ÷ autoCompactWindow × 100、隨 `/autocompact` 即時變動（每次 render 讀 user 層 settings）；**否則後備近似** NN = used_percentage ÷ 門檻（env `CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE` 否則 95%）。stdin **不含**任何 auto-compact 欄位，故視窗改從 settings 讀。| 永遠（永不隱藏）|
 | `session:` | `session_name` | 原文 | 命名過才有（`--name` / `/rename`）|
 
 ## 第 2 行（repo / git）

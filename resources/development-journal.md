@@ -100,6 +100,15 @@
 
 ---
 
+## 13. v1.4.1：compact bar 改讀真實 auto-compact 視窗
+
+- 症狀：改 `/autocompact`（500k↔1m）時 bar 的 % 不變。
+- 根因（systematic-debugging，4 來源一致）：v1.4.0 用 `used_percentage ÷ 95` 近似，而 `/autocompact` 實際把視窗（tokens）寫進 `~/.claude/settings.json` 的 `autoCompactWindow`；stdin JSON **不含**任何 auto-compact 欄位（真實擷取證實）。兩個輸入都與該設定無關 → bar 凍結。
+- 修法：有 `autoCompactWindow` → `compact% = total_input_tokens ÷ autoCompactWindow × 100`（夾 0–100）；否則沿用近似。每次 render 即時讀 user 層 settings（不進 60s 快取）→ 改 `/autocompact` 下一次 render 立即反映。env override 僅留在近似後備路徑。
+- 實作：`compact.mjs` 加 `autoCompactWindow(settingsObjs)`、`autoCompactPct` 改具名物件參數（token 路徑優先）；`count.mjs` export `readJson`；`statusline.mjs` 注入 `deps.autoCompactWindow`。純函式全測（**79 測試全綠**），永不崩潰不變。
+
+---
+
 ## 版本沿革
 | 版本 | 內容 |
 |---|---|
@@ -109,6 +118,7 @@
 | 1.2.0 | 狀態列永不隱藏：讀到→真值（含真 0）原色，沒抓到→n/a/none 並 DIM |
 | 1.3.0 | 新增 `/leon-statusline:resync-statusline` 手動重指指令（setup.mjs applySync 回傳 status + CLI --report）|
 | 1.4.0 | 第 1 行 context bar 改為 auto-compact %（used 對門檻換算，compact 標籤；門檻 env override 否則 95%）|
+| 1.4.1 | 修 compact bar：改讀 `~/.claude/settings.json` 的 `autoCompactWindow`（tokens），用 total_input_tokens÷window 算進度，隨 `/autocompact` 即時變動；無則沿用 95% 近似 |
 
 ## 最終狀態
 - v1.2.0、**63 測試全綠**、**0 npm 漏洞**、public GitHub、跨平台、自動重指、**狀態列永不隱藏**。
