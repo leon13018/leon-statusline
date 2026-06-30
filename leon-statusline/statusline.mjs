@@ -1,10 +1,11 @@
 import { homedir } from 'node:os'
+import { join } from 'node:path'
 import { parseInput } from './src/input.mjs'
 import { buildOutput } from './src/render.mjs'
 import { gitInfo } from './src/git.mjs'
-import { countInfra } from './src/count.mjs'
+import { countInfra, readJson } from './src/count.mjs'
 import { withCache } from './src/cache.mjs'
-import { autoCompactThreshold } from './src/compact.mjs'
+import { autoCompactThreshold, autoCompactWindow } from './src/compact.mjs'
 
 async function main() {
   let out = ''
@@ -19,12 +20,15 @@ async function main() {
     const d = parseInput(raw)
     const sid = d.session_id
     const home = homedir()
+    // 每次 render 即時讀 user settings 的 autoCompactWindow（隨 /autocompact 立即反映）
+    const userSettings = readJson(join(home, '.claude', 'settings.json'))
     const deps = {
       home,
       now: () => Math.floor(Date.now() / 1000),
       git: cwd => cwd ? withCache(sid, 'git', 2000, () => gitInfo(cwd)) : null,
       counts: cwd => cwd ? withCache(sid, 'counts', 60000, () => countInfra(cwd, home)) : null,
       autoCompactThreshold: autoCompactThreshold(),
+      autoCompactWindow: autoCompactWindow([userSettings]),
     }
     out = buildOutput(d, deps)
     if (!out) out = d.model?.display_name || 'claude'

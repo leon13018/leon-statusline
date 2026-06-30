@@ -2,7 +2,7 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "leon-statusline",
   "displayName": "leon-statusline",
-  "version": "1.4.0",
+  "version": "1.4.1",
   "description": "Cross-platform 4-line Claude Code status line",
   "author": { "name": "leon13018" },
   "license": "MIT"
