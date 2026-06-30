@@ -41,7 +41,7 @@ export function countMemory(memDir) {
   return countDirFiles(memDir, n => n.endsWith('.md'))
 }
 
-function readJson(file) {
+export function readJson(file) {
   try { return JSON.parse(readFileSync(file, 'utf8')) } catch { return null }
 }
 

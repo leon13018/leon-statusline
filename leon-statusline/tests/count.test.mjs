@@ -2,7 +2,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest'
 import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { countClaudeMd, countDirFiles, countMemory } from '../src/count.mjs'
+import { countClaudeMd, countDirFiles, countMemory, readJson } from '../src/count.mjs'
 
 let root
 beforeEach(() => { root = mkdtempSync(join(tmpdir(), 'lslc-')) })
@@ -34,5 +34,16 @@ describe('countMemory', () => {
   it('counts *.md including MEMORY.md', () => {
     touch('memory/MEMORY.md'); touch('memory/a.md'); touch('memory/b.txt')
     expect(countMemory(join(root, 'memory'))).toBe(2)
+  })
+})
+
+describe('readJson', () => {
+  it('讀有效 JSON；壞檔/缺檔 → null', () => {
+    const f = join(root, 'settings.json')
+    writeFileSync(f, '{"autoCompactWindow":123}')
+    expect(readJson(f)).toEqual({ autoCompactWindow: 123 })
+    writeFileSync(f, '{ not json')
+    expect(readJson(f)).toBe(null)
+    expect(readJson(join(root, 'nope-does-not-exist.json'))).toBe(null)
   })
 })
