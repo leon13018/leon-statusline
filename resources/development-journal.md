@@ -1,6 +1,6 @@
 # 開發日誌：leon-statusline
 
-> 一句話：把「想要一個漂亮、跨平台、可分享的 Claude Code 狀態列」這個念頭，走完整 brainstorm → 調研 → spec → plan → TDD → 封裝 → 安裝 → 升級自動化，做成 v1.1.1 的 plugin。
+> 一句話：把「想要一個漂亮、跨平台、可分享的 Claude Code 狀態列」這個念頭，走完整 brainstorm → 調研 → spec → plan → TDD → 封裝 → 安裝 → 升級自動化，做成 v1.2.0 的 plugin。
 
 ---
 
@@ -63,7 +63,16 @@
 
 ## 10. 慣例收尾
 - `plugin.json` 顯式宣告 `"hooks": "./hooks/hooks.json"`（標準慣例；功能與自動探索相同）→ **v1.1.1**。
+  - ⚠️ **後來移除**（commit `0a713cf`，1.2.0 起不再宣告）：CC 會**自動載入**標準 `hooks/hooks.json`，manifest 再宣告一次造成 **Duplicate-hooks-file load error**（`/doctor` 可見），反而害 SessionStart 自動重指 hook 載不進來。manifest 的 `hooks` 只該放**額外**的 hook 檔；移除後標準 `hooks.json` 正常單次載入。
 - `claude plugin validate` ✔ 通過。
+
+---
+
+## 11. v1.2.0：狀態列永不隱藏
+- 需求：所有元素永不隱藏；**0 值不可與「沒抓到」混為一談**。
+- 規格：讀到值（含真實 `0`）→ 顯示真值（如 `cost:$0.00`、`5h:0%`、`+0 -0`）並維持元素原色；沒抓到 → 名稱類 `none`、數值類 `n/a`，一律 **DIM 灰**（灰色專指「沒資料」，與真 0 用文字＋顏色雙重區分）。例外：`think` 永遠 on/off、第 4 行計數 0 即真 0。
+- 實作（brainstorm→spec→plan→TDD）：`gradientBar` 區分 null(n/a)/真0(0%)；render 新增 `field` helper；逐行改寫 renderLine1/2/3；加「4 行永不隱藏」回歸測試。**63 測試全綠**。spec/plan 留在 `docs/superpowers/`。
+- 插曲：合回 main 時撞上 origin 的 `0a713cf`（manifest hooks 修正）分歧 → **rebase** 化解，保留該修正、`plugin.json` 收斂為 v1.2.0 且無 manifest hooks。
 
 ---
 
@@ -76,5 +85,5 @@
 | 1.2.0 | 狀態列永不隱藏：讀到→真值（含真 0）原色，沒抓到→n/a/none 並 DIM |
 
 ## 最終狀態
-- v1.1.1、**55 測試全綠**、**0 npm 漏洞**、public GitHub、跨平台、自動重指。
-- 構成：`statusline.mjs`（進入點）+ `src/`（color/format/input/cache/git/count/render）+ `setup.mjs` + `skills/setup-statusline/` + `hooks/hooks.json`。
+- v1.2.0、**63 測試全綠**、**0 npm 漏洞**、public GitHub、跨平台、自動重指、**狀態列永不隱藏**。
+- 構成：`statusline.mjs`（進入點）+ `src/`（color/format/input/cache/git/count/render）+ `setup.mjs` + `skills/setup-statusline/` + `hooks/hooks.json`（標準路徑自動載入，manifest 不再宣告）。
