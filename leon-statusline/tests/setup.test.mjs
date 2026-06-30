@@ -94,4 +94,28 @@ describe('applySync', () => {
     expect(applySync(f, 'node x').updated).toBe(false)
     expect(applySync(join(dir, 'nope.json'), 'node x').updated).toBe(false)
   })
+  it('status repointed with from/to when ours and stale', () => {
+    const f = join(dir, 'settings.json')
+    const oldCmd = 'node "/p/leon-statusline/1.0.0/statusline.mjs"'
+    writeFileSync(f, JSON.stringify({ statusLine: { type: 'command', command: oldCmd } }))
+    const desired = 'node "/p/leon-statusline/1.1.0/statusline.mjs"'
+    const r = applySync(f, desired)
+    expect(r.status).toBe('repointed')
+    expect(r.from).toBe(oldCmd)
+    expect(r.to).toBe(desired)
+  })
+  it('status current when already pointing at desired', () => {
+    const f = join(dir, 'settings.json')
+    const desired = 'node "/p/leon-statusline/1.1.0/statusline.mjs"'
+    writeFileSync(f, JSON.stringify({ statusLine: { command: desired } }))
+    expect(applySync(f, desired).status).toBe('current')
+  })
+  it('status foreign when statusLine not ours', () => {
+    const f = join(dir, 'settings.json')
+    writeFileSync(f, JSON.stringify({ statusLine: { command: 'node "/home/me/custom.mjs"' } }))
+    expect(applySync(f, 'node "/p/leon-statusline/1.1.0/statusline.mjs"').status).toBe('foreign')
+  })
+  it('status absent when file missing', () => {
+    expect(applySync(join(dir, 'nope.json'), 'node x').status).toBe('absent')
+  })
 })

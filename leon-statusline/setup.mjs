@@ -33,13 +33,15 @@ export function isOurs(command) {
 // 升級後路徑改變時自動重指：僅當既有 statusLine 是「我們的」且過時才改寫（idempotent、寫前備份）
 export function applySync(file, desiredCommand, stamp = String(Date.now())) {
   let j
-  try { j = JSON.parse(readFileSync(file, 'utf8')) } catch { return { updated: false } }
+  try { j = JSON.parse(readFileSync(file, 'utf8')) } catch { return { updated: false, status: 'absent' } }
   const cur = j.statusLine && j.statusLine.command
-  if (!isOurs(cur) || cur === desiredCommand) return { updated: false }
-  copyFileSync(file, `${file}.bak-${stamp}`)
+  if (!isOurs(cur)) return { updated: false, status: 'foreign' }
+  if (cur === desiredCommand) return { updated: false, status: 'current' }
+  const backup = `${file}.bak-${stamp}`
+  copyFileSync(file, backup)
   j.statusLine = { ...j.statusLine, command: desiredCommand }
   writeFileSync(file, JSON.stringify(j, null, 2))
-  return { updated: true, backup: `${file}.bak-${stamp}` }
+  return { updated: true, status: 'repointed', from: cur, to: desiredCommand, backup }
 }
 
 // CLI: node setup.mjs --root <pluginRoot> [--scope user|project|local] [--force] | --sync
