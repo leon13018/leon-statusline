@@ -15,6 +15,7 @@
 
 ## src/（純函式邏輯，可獨立測）
 - `color.mjs` — `colorize` / `gradientColor` / `gradientBar`（truecolor 平滑漸層）
+- `compact.mjs` — `autoCompactThreshold`（env `CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE` 否則 95）/ `autoCompactPct`（used 對門檻換算，給第 1 行 bar）
 - `format.mjs` — `fmtDuration` / `resetCountdown` / `shortPath` / `attr`（條件顯示單位）/ `joinLine`
 - `input.mjs` — `parseInput`（容錯 JSON）
 - `cache.mjs` — `cacheDir` / `withCache`（`session_id` key、TTL、never-throw）

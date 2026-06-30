@@ -8,7 +8,7 @@ leon-statusline 顯示什麼、資料從哪來、什麼條件下才顯示。技�
 
 ## 版面總覽（4 行）
 ```
-~/…/Project_01  Opus effort:high think:on  token:15.5k  ██████████░░░░░░░░░░ 42%  session:my-session
+~/…/Project_01  Opus effort:high think:on  token:15.5k  compact ██████████░░░░░░░░░░ 42%  session:my-session
 repo:claude-code  worktree:feat-x  git:main +2 ~1 ↑1↓2  +156 -23  PR:#1234 pending
 api:<1m  wall:14m  cost:$0.42  5h:24%(reset 1h23m)  7d:41%(reset 5d4h)
 CLAUDE.md:7  memory:5  mcp:3  agent:1  skill:2  hook:13  plugin:2  workflow:1
@@ -30,7 +30,7 @@ CLAUDE.md:7  memory:5  mcp:3  agent:1  skill:2  hook:13  plugin:2  workflow:1
 | `effort:` | `effort.level` | low/medium/high/xhigh/max | 模型支援 effort 時 |
 | `think:` | `thinking.enabled` | `on` | 僅為 true |
 | `token:` | `context_window.total_input_tokens` | `15.5k`（1 位小數 k）| 有才顯示 |
-| context bar | `context_window.used_percentage` | 20 格 `█/░` + ` NN%`，綠→黃→紅平滑漸層 | 有才顯示 |
+| context bar（auto-compact %）| `context_window.used_percentage` | `compact` + 20 格 `█/░` + ` NN%`；NN = used ÷ 門檻 × 100，綠→紅；門檻取 env `CLAUDE_CODE_AUTOCOMPACT_PCT_OVERRIDE`，否則預設 95%（**近似**：CC 未公開門檻、`autoCompactWindow` 假設＝`context_window_size`）| 永遠（永不隱藏）|
 | `session:` | `session_name` | 原文 | 命名過才有（`--name` / `/rename`）|
 
 ## 第 2 行（repo / git）
