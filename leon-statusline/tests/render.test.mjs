@@ -38,6 +38,14 @@ describe('renderLine1 (never hide)', () => {
     expect(out).toContain('compact')
     expect(out).toContain('50%')   // 47.5 / 95 * 100 = 50
   })
+  it('有 autoCompactWindow → bar 用 total_input_tokens÷window，且隨視窗變動', () => {
+    const d = { context_window: { total_input_tokens: 250000, used_percentage: 25 } }
+    const out500k = strip(renderLine1(d, { ...deps, autoCompactWindow: 500000 }))
+    expect(out500k).toContain('50%')        // 250000/500000
+    expect(out500k).not.toContain('26%')    // 非近似 25/95≈26
+    const out1m = strip(renderLine1(d, { ...deps, autoCompactWindow: 1000000 }))
+    expect(out1m).toContain('25%')          // 250000/1000000 → 視窗變大 → %變小
+  })
 })
 
 describe('renderLine2 (never hide)', () => {

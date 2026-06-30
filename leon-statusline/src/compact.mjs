@@ -6,8 +6,11 @@ export function autoCompactThreshold(env = process.env) {
   return Number.isFinite(raw) && raw > 0 && raw <= 100 ? raw : DEFAULT_AUTOCOMPACT_PCT
 }
 
-// 把 context 已用 % 換算成 auto-compact %（used 對門檻），夾 0–100；used 缺 → null
-export function autoCompactPct(usedPercentage, threshold = autoCompactThreshold()) {
+// 計算 auto-compact 進度 %（0–100）。真實 token 視窗優先，否則 used% 對門檻近似；皆缺 → null
+export function autoCompactPct({ usedTokens, usedPercentage, window, threshold = autoCompactThreshold() } = {}) {
+  if (Number.isFinite(window) && window > 0 && Number.isFinite(usedTokens)) {
+    return Math.max(0, Math.min(100, (usedTokens / window) * 100)) // 夾 0–100（負 usedTokens → 0）
+  }
   if (usedPercentage == null || !Number.isFinite(usedPercentage)) return null
   return Math.max(0, Math.min(100, (usedPercentage / threshold) * 100))
 }

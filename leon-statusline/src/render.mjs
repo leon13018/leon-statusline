@@ -23,7 +23,12 @@ export function renderLine1(d, deps) {
     field('effort:', d.effort?.level, DIM, 'n/a'),
     colorize('think:' + (d.thinking?.enabled ? 'on' : 'off'), DIM),
     field('token:', tok != null ? `${(tok / 1000).toFixed(1)}k` : null, DIM, 'n/a'),
-    colorize('compact', DIM) + ' ' + gradientBar(autoCompactPct(cw.used_percentage, deps.autoCompactThreshold)),
+    colorize('compact', DIM) + ' ' + gradientBar(autoCompactPct({
+      usedTokens: cw.total_input_tokens,
+      usedPercentage: cw.used_percentage,
+      window: deps.autoCompactWindow,
+      threshold: deps.autoCompactThreshold,
+    })),
     field('session:', d.session_name, DIM, 'none'),
   ]
   return joinLine(parts)

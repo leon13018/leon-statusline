@@ -15,17 +15,27 @@ describe('autoCompactThreshold', () => {
 })
 
 describe('autoCompactPct', () => {
-  it('null / non-finite used -> null', () => {
-    expect(autoCompactPct(null, 95)).toBe(null)
-    expect(autoCompactPct(undefined, 95)).toBe(null)
+  it('token 路徑：usedTokens ÷ window', () => {
+    expect(autoCompactPct({ usedTokens: 250000, window: 500000 })).toBe(50)
+    expect(autoCompactPct({ usedTokens: 95689, window: 1000000 })).toBeCloseTo(9.5689, 4)
   })
-  it('scales used to threshold', () => {
-    expect(autoCompactPct(47.5, 95)).toBe(50)
-    expect(autoCompactPct(0, 95)).toBe(0)
+  it('token 路徑夾 0–100', () => {
+    expect(autoCompactPct({ usedTokens: 600000, window: 500000 })).toBe(100) // usedTokens > window
+    expect(autoCompactPct({ usedTokens: -5, window: 500000 })).toBe(0)
   })
-  it('caps at 100 when used >= threshold', () => {
-    expect(autoCompactPct(95, 95)).toBe(100)
-    expect(autoCompactPct(120, 95)).toBe(100)
+  it('無有效 window → 近似 usedPercentage ÷ threshold', () => {
+    expect(autoCompactPct({ usedPercentage: 47.5, threshold: 95 })).toBe(50)
+    expect(autoCompactPct({ usedPercentage: 0, threshold: 95 })).toBe(0)
+    expect(autoCompactPct({ usedPercentage: 47.5, window: 0, threshold: 95 })).toBe(50) // window 0 無效
+    expect(autoCompactPct({ usedPercentage: 120, threshold: 95 })).toBe(100)
+  })
+  it('window 在但 usedTokens 缺 → 走近似', () => {
+    expect(autoCompactPct({ usedPercentage: 47.5, window: 500000, threshold: 95 })).toBe(50)
+  })
+  it('兩者皆缺 → null', () => {
+    expect(autoCompactPct({})).toBe(null)
+    expect(autoCompactPct({ usedPercentage: null, threshold: 95 })).toBe(null)
+    expect(autoCompactPct()).toBe(null)
   })
 })
 
