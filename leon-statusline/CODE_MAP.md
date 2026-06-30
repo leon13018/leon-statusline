@@ -5,11 +5,12 @@
 - `setup.mjs` — 安裝/重指：
   - `targetPath(scope)` user/project/local 對應 settings.json
   - `mergeStatusLine` / `applySetup`（寫入，偵測既有 statusLine 不覆蓋）
-  - `isOurs` / `applySync`（`--sync` 升級後自動重指、idempotent、寫前備份）
-  - CLI：`--scope` / `--force` / `--sync`
+  - `isOurs` / `applySync`（`--sync` 升級後自動重指、idempotent、寫前備份；回傳 `status`：absent/foreign/current/repointed）
+  - CLI：`--scope` / `--force` / `--sync`（`--report` 逐 scope 印 JSON，給 resync skill 用）
 - `.claude-plugin/plugin.json` — manifest（name/version/`hooks` 宣告）
 - `hooks/hooks.json` — **SessionStart** → `setup.mjs --sync`（升級後自動重指路徑）
 - `skills/setup-statusline/SKILL.md` — 指令 `/leon-statusline:setup-statusline`（驅動「偵測既有→問→覆蓋備份」互動）
+- `skills/resync-statusline/SKILL.md` — 指令 `/leon-statusline:resync-statusline`（手動重指：跑 `setup.mjs --sync --report`、逐 scope 回報；只動「我們的」statusLine）
 - `package.json` / `vitest.config.mjs` — dev 依賴（vitest）與測試設定
 
 ## src/（純函式邏輯，可獨立測）

@@ -107,6 +107,7 @@
 | 1.1.0 | 加 SessionStart hook，升級後自動重指 statusLine 路徑 |
 | 1.1.1 | plugin.json 顯式宣告 hooks（慣例）|
 | 1.2.0 | 狀態列永不隱藏：讀到→真值（含真 0）原色，沒抓到→n/a/none 並 DIM |
+| 1.3.0 | 新增 `/leon-statusline:resync-statusline` 手動重指指令（setup.mjs applySync 回傳 status + CLI --report）|
 
 ## 最終狀態
 - v1.2.0、**63 測試全綠**、**0 npm 漏洞**、public GitHub、跨平台、自動重指、**狀態列永不隱藏**。
