@@ -7,7 +7,7 @@
   - `mergeStatusLine` / `applySetup`（寫入，偵測既有 statusLine 不覆蓋）
   - `isOurs` / `applySync`（`--sync` 升級後自動重指、idempotent、寫前備份；回傳 `status`：absent/foreign/current/repointed）
   - CLI：`--scope` / `--force` / `--sync`（`--report` 逐 scope 印 JSON，給 resync skill 用）
-- `.claude-plugin/plugin.json` — manifest（name/version/`hooks` 宣告）
+- `.claude-plugin/plugin.json` — manifest（name/version；**不宣告 hooks**，靠 `hooks/hooks.json` 自動載入；重複宣告會 Duplicate-hooks 失敗）
 - `hooks/hooks.json` — **SessionStart** → `setup.mjs --sync`（升級後自動重指路徑）
 - `skills/setup-statusline/SKILL.md` — 指令 `/leon-statusline:setup-statusline`（驅動「偵測既有→問→覆蓋備份」互動）
 - `skills/resync-statusline/SKILL.md` — 指令 `/leon-statusline:resync-statusline`（手動重指：跑 `setup.mjs --sync --report`、逐 scope 回報；只動「我們的」statusLine）

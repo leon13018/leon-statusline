@@ -23,7 +23,7 @@ CLAUDE.md:7  memory:5  mcp:3  agent:1  skill:2  hook:13  plugin:2  workflow:1
 ---
 
 ## 第 1 行（identity / context）
-| attribute | 來源 JSON | 格式 | 條件 |
+| attribute | 來源 JSON | 格式 | 真值條件（否則顯示 n/a/none）|
 |---|---|---|---|
 | 目錄 | `workspace.current_dir` | 家目錄→`~`；超 3 段收 `…` 留最後 2 段 | 永遠 |
 | 模型 | `model.display_name` | 原文 | 永遠 |
@@ -34,7 +34,7 @@ CLAUDE.md:7  memory:5  mcp:3  agent:1  skill:2  hook:13  plugin:2  workflow:1
 | `session:` | `session_name` | 原文 | 命名過才有（`--name` / `/rename`）|
 
 ## 第 2 行（repo / git）
-| attribute | 來源 | 格式 | 條件 |
+| attribute | 來源 | 格式 | 真值條件（否則顯示 n/a/none）|
 |---|---|---|---|
 | `repo:` | `workspace.repo.name` | 原文 | 有 git remote |
 | `worktree:` | `workspace.git_worktree` | 原文 | 在 linked worktree |
@@ -43,7 +43,7 @@ CLAUDE.md:7  memory:5  mcp:3  agent:1  skill:2  hook:13  plugin:2  workflow:1
 | `PR:` | `pr.number` / `pr.review_state` | `#1234 pending`（approved/pending/changes_requested/draft）| 當前分支有 open PR |
 
 ## 第 3 行（time / cost / rate）
-| attribute | 來源 | 格式 | 條件 |
+| attribute | 來源 | 格式 | 真值條件（否則顯示 n/a/none）|
 |---|---|---|---|
 | `api:` | `cost.total_api_duration_ms` | 連接非零單位至分鐘；<1 分 `<1m` | 有才顯示 |
 | `wall:` | `cost.total_duration_ms`（**含閒置**）| `14m` / `2h5m` / `1d3h5m` | 有才顯示 |

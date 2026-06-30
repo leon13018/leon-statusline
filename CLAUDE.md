@@ -15,6 +15,7 @@
 3. **腳本內路徑一律 `os.homedir()` + `path.join()`** — 不信任 `~`、不字串拼 `/`/`\\`、不讀 `$HOME`/`%USERPROFILE%`。
 4. **永不崩潰**：任何情況一律 `process.exit(0)`、至少印一行、子程序走快取不阻塞 render。
 5. **改對外行為要 bump `leon-statusline/.claude-plugin/plugin.json` 的 `version`**，否則別人 `/plugin update` 收不到。
+6. **`plugin.json` 不要宣告 `hooks`** — CC 會自動載入 `hooks/hooks.json`；manifest 再宣告會 **Duplicate-hooks 載入失敗**（`/doctor` 可見），害 SessionStart 自動重指 hook 載不進來。詳見 `resources/development-journal.md` §10。
 
 ## 慣例
 - runtime = Node（ESM `.mjs`）；測試 = Vitest（dev-only）。改 code **先紅後綠（TDD）、逐 task commit**。
