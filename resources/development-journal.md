@@ -76,6 +76,30 @@
 
 ---
 
+## 12. 更新/部署 SOP（push 後如何讓本機/別人收到新版）
+
+> 踩過的坑：push 到 GitHub ≠ 本機就更新。`/reload-plugins` **只重載快取裡的舊版**，不會去 GitHub 抓新版。
+
+**更新 = 兩件獨立的事，別混為一談：**
+
+| 步驟 | 在做什麼 | 誰負責 |
+|---|---|---|
+| ① **裝新版** | 把新版碼裝進 cache（`…/leon-statusline/<新版號>/`）| `/plugin marketplace update <marketplace>`（git-pull clone 並 bump 安裝版）／開機 auto-update。**不是 hook、也不是 reload。** |
+| ② **重指 statusLine** | 把 settings.json 的 statusLine 改指到新版路徑 | **SessionStart hook** 自動（下次開 session 跑 `setup.mjs --sync`）／或手動跑同一支 `setup.mjs --sync` 即時重指 |
+
+- **hook 只管 ②，不管 ①**。所以光重啟沒用——若 ① 沒做（cache 沒新版），hook 算出的「目前載入版本」還是舊的，只會重指回舊版。
+- `uninstall` + `install` **不是必要**——`/plugin marketplace update` 印的「N plugin bumped」就已把安裝版升級。
+- **第三方 / 自己加的 marketplace，auto-update 預設「關」**（官方預設開）。要像官方一樣開機自動更新 → `~/.claude/settings.json` 的 `extraKnownMarketplaces.<marketplace>` 加 `"autoUpdate": true`。
+- **即時手動重指**（裝好新版、不想等重啟）：
+  ```
+  node "<cache>/leon-statusline/<新版號>/setup.mjs" --sync --root "<cache>/leon-statusline/<新版號>"
+  ```
+  （`--sync` 靜默、冪等、寫前自動備份；與 hook 跑的是同一段 `applySync`。）
+- **驗證 4 點**：① cache 有 `<新版號>/` 目錄 ② `installed_plugins.json` 的 version 對 ③ `settings.json` 的 statusLine 指到 `<新版號>/statusline.mjs` ④ `<新版號>/src/render.mjs` 含新碼。
+- 改完 statusLine 後，畫面在 `refreshInterval`（10s）或下次 render 才換；沒換用 `/reload-plugins` 推一下，**不必重啟**。
+
+---
+
 ## 版本沿革
 | 版本 | 內容 |
 |---|---|
