@@ -32,6 +32,12 @@ describe('renderLine1 (never hide)', () => {
     expect(out).toContain('0%')
     expect(out).not.toContain('token:n/a')
   })
+  it('bar 顯示 auto-compact %（used 對門檻換算）+ compact 標籤', () => {
+    const d = { context_window: { used_percentage: 47.5 } }
+    const out = strip(renderLine1(d, { ...deps, autoCompactThreshold: 95 }))
+    expect(out).toContain('compact')
+    expect(out).toContain('50%')   // 47.5 / 95 * 100 = 50
+  })
 })
 
 describe('renderLine2 (never hide)', () => {

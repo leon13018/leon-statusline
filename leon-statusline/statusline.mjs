@@ -4,6 +4,7 @@ import { buildOutput } from './src/render.mjs'
 import { gitInfo } from './src/git.mjs'
 import { countInfra } from './src/count.mjs'
 import { withCache } from './src/cache.mjs'
+import { autoCompactThreshold } from './src/compact.mjs'
 
 async function main() {
   let out = ''
@@ -23,6 +24,7 @@ async function main() {
       now: () => Math.floor(Date.now() / 1000),
       git: cwd => cwd ? withCache(sid, 'git', 2000, () => gitInfo(cwd)) : null,
       counts: cwd => cwd ? withCache(sid, 'counts', 60000, () => countInfra(cwd, home)) : null,
+      autoCompactThreshold: autoCompactThreshold(),
     }
     out = buildOutput(d, deps)
     if (!out) out = d.model?.display_name || 'claude'

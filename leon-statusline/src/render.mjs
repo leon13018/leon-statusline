@@ -1,5 +1,6 @@
 import { attr, joinLine, fmtDuration, resetCountdown, shortPath } from './format.mjs'
 import { gradientBar, colorize } from './color.mjs'
+import { autoCompactPct } from './compact.mjs'
 
 const BLUE = [86, 156, 214], MAGENTA = [197, 134, 192], DIM = [130, 130, 130]
 const GREEN = [0, 200, 80], YELLOW = [220, 200, 0], RED = [220, 40, 40], CYAN = [86, 182, 194]
@@ -22,7 +23,7 @@ export function renderLine1(d, deps) {
     field('effort:', d.effort?.level, DIM, 'n/a'),
     colorize('think:' + (d.thinking?.enabled ? 'on' : 'off'), DIM),
     field('token:', tok != null ? `${(tok / 1000).toFixed(1)}k` : null, DIM, 'n/a'),
-    gradientBar(cw.used_percentage),
+    colorize('compact', DIM) + ' ' + gradientBar(autoCompactPct(cw.used_percentage, deps.autoCompactThreshold)),
     field('session:', d.session_name, DIM, 'none'),
   ]
   return joinLine(parts)
