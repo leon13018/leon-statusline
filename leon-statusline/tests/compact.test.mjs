@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest'
-import { autoCompactThreshold, autoCompactPct, DEFAULT_AUTOCOMPACT_PCT } from '../src/compact.mjs'
+import { autoCompactThreshold, autoCompactPct, autoCompactWindow, DEFAULT_AUTOCOMPACT_PCT } from '../src/compact.mjs'
 
 describe('autoCompactThreshold', () => {
   it('uses env override when valid', () => {
@@ -26,5 +26,21 @@ describe('autoCompactPct', () => {
   it('caps at 100 when used >= threshold', () => {
     expect(autoCompactPct(95, 95)).toBe(100)
     expect(autoCompactPct(120, 95)).toBe(100)
+  })
+})
+
+describe('autoCompactWindow', () => {
+  it('取第一個有效正數視窗', () => {
+    expect(autoCompactWindow([{ autoCompactWindow: 500000 }])).toBe(500000)
+    expect(autoCompactWindow([{}, { autoCompactWindow: 1000000 }])).toBe(1000000)
+    expect(autoCompactWindow([{ autoCompactWindow: 0 }, { autoCompactWindow: 800000 }])).toBe(800000)
+  })
+  it('跳過 null/0/負/NaN/非數字；全無 → null', () => {
+    expect(autoCompactWindow([{ autoCompactWindow: 0 }])).toBe(null)
+    expect(autoCompactWindow([{ autoCompactWindow: -1 }])).toBe(null)
+    expect(autoCompactWindow([{ autoCompactWindow: 'big' }])).toBe(null)
+    expect(autoCompactWindow([null, undefined, {}])).toBe(null)
+    expect(autoCompactWindow([])).toBe(null)
+    expect(autoCompactWindow()).toBe(null)
   })
 })

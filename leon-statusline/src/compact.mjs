@@ -11,3 +11,12 @@ export function autoCompactPct(usedPercentage, threshold = autoCompactThreshold(
   if (usedPercentage == null || !Number.isFinite(usedPercentage)) return null
   return Math.max(0, Math.min(100, (usedPercentage / threshold) * 100))
 }
+
+// 從 settings 物件陣列（依優先序排好）取第一個有效的 autoCompactWindow（tokens）；無 → null
+export function autoCompactWindow(settingsObjs) {
+  for (const s of settingsObjs || []) {
+    const w = s && s.autoCompactWindow
+    if (Number.isFinite(w) && w > 0) return w
+  }
+  return null
+}
