@@ -43,127 +43,65 @@
 
 > ⚠️ 實驗腳本自行 spawn `typescript-language-server` 並明示帶入 `initializationOptions`，**不依賴 win-lsp 設定**。故實驗驗證的是「機制有效」，win-lsp 改設定則是把該機制套用到實際環境；兩者分開驗收。
 
-- [ ] **Step 1: 寫實驗腳本**
+- [x] **Step 1: 寫實驗腳本**
 
-建立 `tools/ata-storm.mjs`：
+建立 `tools/ata-storm.mjs`。**實作以該檔為準，此處不再內嵌全文**（初版計畫內嵌的程式碼已被三次修訂淘汰，
+內嵌副本只會過期）。腳本規格見 spec §3.2「實驗步驟（三版）」，要點：
 
-```js
-// A/B 對照：量測 tsserver 在家目錄 churn 下的 CPU 消耗
-// 用法：node tools/ata-storm.mjs <on|off>
-//   off = A 組（現況，不帶選項）   on = B 組（disableAutomaticTypingAcquisition: true）
-import { spawn, execFileSync } from 'node:child_process'
-import { mkdtempSync, writeFileSync, rmSync, mkdirSync } from 'node:fs'
-import { tmpdir, homedir } from 'node:os'
-import { join } from 'node:path'
-import { pathToFileURL } from 'node:url'
+| 要點 | 內容 |
+|---|---|
+| 專案 root | 真實受害專案 `~/Desktop/wlc-timerleak`（唯讀），可用第 3 個 argv 覆寫 |
+| 開檔 | 遞迴取前 10 個 `.mjs`（每層字典序），讀真實內容送 `didOpen` |
+| **capabilities** | **必須含 `textDocument.synchronization` 與 `textDocument.publishDiagnostics`** |
+| 驅動（兩種同開） | `didChange` 每 1.5 秒注入新的無解析 bare import ＋ `~/.claude/.ata-probe/` churn（8 檔 / 30 秒） |
+| CPU 量測 | tsserver **及其所有子孫行程**總和，每次量測重新展開 `ParentProcessId` |
+| 暖機 / 主窗 / 收尾窗 | 20 秒 / 180 秒 / 60 秒（收尾窗只留 churn，記 `churnOnlyRateCores`，資訊性） |
+| 前置檢查 | 診斷未收到 → exit 4；A 組 `rateCores < 0.05` → `reproduced: false`、exit 3 |
+| 清理 | `finally` 刪 churn 目錄、終止 LSP；受害專案零寫入 |
 
-const MODE = process.argv[2]
-if (MODE !== 'on' && MODE !== 'off') {
-  console.error('用法: node tools/ata-storm.mjs <on|off>')
-  process.exit(2)
-}
+> **三次修訂的脈絡**（完整版見 spec §3.2）：
+> 1. 初版合成單檔 probe → A 組 **0.009 核**，未重現空轉。
+> 2. 改真實專案（10 檔、整棵行程樹、180 秒窗）→ 仍 **0.003 核**，未重現。
+> 3. 查出真因：`initialize` 的 `capabilities` 是空物件 `{}`（初版簡報寫錯、兩版照抄），
+>    診斷管線從未啟動，tsserver 從未真正解析模組 —— 前兩版量的都是「半睡」的行程。
+>    修正後改以 `didChange` 驅動 → A 組 **0.173 核**，首次重現。
 
-const DURATION_MS = 120_000
-const CHURN_PERIOD_MS = 3750          // 8 檔 / 30 秒（實測 churn 速率）
-const SERVER = join(process.env.APPDATA, 'npm', 'node_modules', 'typescript-language-server', 'lib', 'cli.mjs')
-
-const ps = cmd => execFileSync('powershell', ['-NoProfile', '-Command', cmd], { encoding: 'utf8', timeout: 15000 }).trim()
-const sleep = ms => new Promise(r => setTimeout(r, ms))
-
-// scratch 專案：刻意複製受害專案的形狀（無設定檔、無 node_modules、bare import）
-const proj = mkdtempSync(join(tmpdir(), 'ata-probe-'))
-writeFileSync(join(proj, 'probe.mjs'), "import x from 'some-missing-pkg'\nexport const y = x\n")
-
-// churn 目錄必須在家目錄下，才會命中 failed-lookup 監看
-const churn = join(homedir(), '.claude', '.ata-probe')
-mkdirSync(churn, { recursive: true })
-
-let lsp = null, timer = null
-const cleanup = () => {
-  if (timer) clearInterval(timer)
-  try { if (lsp) lsp.kill() } catch {}
-  try { rmSync(churn, { recursive: true, force: true }) } catch {}
-  try { rmSync(proj, { recursive: true, force: true }) } catch {}
-}
-process.on('SIGINT', () => { cleanup(); process.exit(130) })
-
-try {
-  lsp = spawn('node', [SERVER, '--stdio'], { stdio: ['pipe', 'pipe', 'ignore'] })
-  lsp.stdout.on('data', () => {})     // 排空 stdout，避免管線塞住
-  const send = msg => {
-    const body = JSON.stringify(msg)
-    lsp.stdin.write(`Content-Length: ${Buffer.byteLength(body)}\r\n\r\n${body}`)
-  }
-
-  send({
-    jsonrpc: '2.0', id: 1, method: 'initialize',
-    params: {
-      processId: process.pid,
-      rootUri: pathToFileURL(proj).href,
-      capabilities: {},
-      initializationOptions: MODE === 'on' ? { disableAutomaticTypingAcquisition: true } : {},
-    },
-  })
-  send({ jsonrpc: '2.0', method: 'initialized', params: {} })
-  send({
-    jsonrpc: '2.0', method: 'textDocument/didOpen',
-    params: { textDocument: {
-      uri: pathToFileURL(join(proj, 'probe.mjs')).href,
-      languageId: 'javascript', version: 1,
-      text: "import x from 'some-missing-pkg'\nexport const y = x\n",
-    } },
-  })
-
-  // 等待全語意 tsserver 子行程出現（排除 partialSemantic 那隻）
-  let tsPid = ''
-  for (let i = 0; i < 30 && !tsPid; i++) {
-    await sleep(1000)
-    tsPid = ps(`(Get-CimInstance Win32_Process -Filter "ParentProcessId=${lsp.pid}" | Where-Object { $_.CommandLine -like '*tsserver.js*' -and $_.CommandLine -notlike '*partialSemantic*' } | Select-Object -First 1).ProcessId`)
-  }
-  if (!tsPid) throw new Error('找不到 tsserver 子行程')
-
-  const cmdline = ps(`(Get-CimInstance Win32_Process -Filter "ProcessId=${tsPid}").CommandLine`)
-  const cpuOf = () => Number(ps(`(Get-Process -Id ${tsPid}).CPU`))
-
-  let n = 0
-  timer = setInterval(() => {
-    try { writeFileSync(join(churn, `c${n++}.tmp`), String(Date.now())) } catch {}
-  }, CHURN_PERIOD_MS)
-
-  const before = cpuOf()
-  await sleep(DURATION_MS)
-  const after = cpuOf()
-
-  const cpuSeconds = Number((after - before).toFixed(2))
-  console.log(JSON.stringify({
-    mode: MODE,
-    tsPid: Number(tsPid),
-    hasFlag: cmdline.includes('--disableAutomaticTypingAcquisition'),
-    windowSec: DURATION_MS / 1000,
-    cpuSeconds,
-    rateCores: Number((cpuSeconds / (DURATION_MS / 1000)).toFixed(3)),
-  }, null, 2))
-} finally {
-  cleanup()
-}
-```
-
-- [ ] **Step 2: 跑 A 組（現況基準）**
+- [x] **Step 2: 跑 A 組（現況基準）**
 
 Run（在 repo 根目錄）：`node tools/ata-storm.mjs off`
-Expected: 約 2 分鐘後印出 JSON，`hasFlag: false`，`rateCores` 明顯 > 0（重現空轉）。**記下 `cpuSeconds`。**
+Expected: 約 5 分鐘後印出 JSON，`hasFlag: false`、`diagnosticsFilesReceived` 非空、`reproduced: true`。
+**記下 `cpuSeconds`。** 若 `reproduced: false` 或診斷為空 → BLOCKED，不得續跑 B 組。
 
-- [ ] **Step 3: 跑 B 組（帶旗標）**
+- [x] **Step 3: 跑 B 組（帶旗標）**
 
 Run: `node tools/ata-storm.mjs on`
 Expected: `hasFlag: true`。**記下 `cpuSeconds`。**
 
-- [ ] **Step 4: 驗收判準（spec §3.2，事先寫死不得放寬）**
+- [x] **Step 4: 驗收判準（spec §3.2，事先寫死不得放寬）**
 
 檢查：`B.cpuSeconds <= A.cpuSeconds * 0.2` **且** `B.rateCores < 0.1`。
 
 - 通過 → 繼續 Step 5。
 - **未通過 → 停止，回報數據**。依 spec §3.3 收尾條件，需改為替 9 個裸專案補 `jsconfig.json` 後重跑本實驗；該分支不在本計畫範圍，需先與使用者確認。
+
+**實測結果（2026-08-09，三版腳本）→ 判準未通過，Task 1 停在此處：**
+
+| | A 組（`off`） | B 組（`on`） |
+|---|---|---|
+| `hasFlag` | false | true |
+| `pids`（行程樹） | 2（tsserver ＋ `typingsInstaller`） | **1（旗標成功阻止 typingsInstaller 生成）** |
+| `diagnosticsNotifications` | 251 | 248 |
+| `reproduced` | true | true |
+| `cpuSeconds`（180 秒窗） | **31.17** | **24.09** |
+| `rateCores` | **0.173** | **0.134** |
+| `churnOnlyRateCores`（60 秒） | 0.003 | 0.001 |
+
+判準計算：`31.17 × 0.2 = 6.234`，`24.09 ≤ 6.234` → **false**；`0.134 < 0.1` → **false**。兩條皆未通過。
+實際降幅僅 **22.7%**（B/A = 0.773），距要求的「降至 20% 以下」差一個量級。
+
+**結論**：`disableAutomaticTypingAcquisition` **確實生效**（B 組完全沒有 `typingsInstaller` 子行程，
+這是機制生效的直接證據），但 ATA **不是** CPU 的主要來源 —— 主導成本是每次 `didChange` 觸發的
+模組解析與診斷重算，停用 ATA 只削掉約兩成。故 Step 5–8 未執行，待使用者裁決（見 spec §3.3 收尾條件）。
 
 - [ ] **Step 5: 備份並修改 win-lsp 設定**
 

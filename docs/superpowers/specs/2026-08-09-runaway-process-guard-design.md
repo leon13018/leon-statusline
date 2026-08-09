@@ -63,19 +63,50 @@
 
 **必要性**：光刪除殘骸不見得充分 —— TypeScript 對不存在的 failed lookup 路徑，是靠監看**最近的存在祖先**來等它出現；刪掉 `node_modules` 後，它仍可能繼續監看家目錄等其重新出現。此假設必須實測，不得推論。
 
-**腳本**：`win-lsp/tests/ata-storm.mjs`（新目錄）
+**腳本**：`tools/ata-storm.mjs`
 
-1. 於**系統暫存區**建 scratch 專案（不污染家目錄）：單一 `.mjs`，內含 bare import。
-2. 起 `typescript-language-server`（stdio），送 `initialize` + `didOpen`。
-3. 等待其 `tsserver` 子行程出現並記錄 PID。
-4. 於 `~/.claude/.ata-probe/` 以**實測速率（8 檔 / 30 秒）**持續寫檔 **120 秒**，模擬真實 churn。
-5. 每 10 秒記錄該 tsserver 的累計 CPU。
-6. 結束後刪除 churn 目錄與 scratch 專案、終止所起的 LSP。
+> **本節經三次修訂才得出可用的實驗方法**，脈絡記錄於此，避免後人重蹈：
+>
+> 1. **初版**：於系統暫存區建合成 scratch 專案（單一 `.mjs`、一個 bare import），churn 120 秒，量單一 tsserver 行程的 CPU。
+>    → A 組實測僅 **0.009 核**，等同閒置，**未重現空轉**；A/B 淪為雜訊比雜訊。
+> 2. **二版**：改用真實受害專案 `wlc-timerleak` 當 root（47 個 `.mjs`、無任何專案設定檔）、didOpen 前 10 個真實檔、CPU 改量**整棵行程樹**（初版漏掉獨立的 `typingsInstaller.js` 子行程）、加 20 秒暖機、觀測窗延長至 180 秒。
+>    → A 組實測 **0.003 核**，**仍未重現**。
+> 3. **三版（現行）**：查出真因 —— `initialize` 送的 `capabilities` 是**空物件 `{}`**（初版簡報就寫錯，兩版一路照抄）。客戶端未宣告任何 `textDocument` 能力，server 的診斷管線從未啟動，tsserver 開檔後直接待機、**從未真正解析模組**，前兩版量到的都是一個「半睡」的行程。
+>    修正 `capabilities` 後診斷正常送達（251 則 `publishDiagnostics` / 10 檔），並改以 `didChange` 注入無解析 bare import 當主驅動。
+>    → A 組實測 **0.173 核**，**首次成功重現**。
+
+**實驗步驟（三版）**：
+
+1. 以真實受害專案為 root：`~/Desktop/wlc-timerleak`（唯讀，腳本只讀不寫；`didChange` 僅改 LSP 記憶體內文件版本，不落地）。
+2. 起 `typescript-language-server`（stdio），送 `initialize`，**`capabilities` 必須包含 `textDocument.synchronization` 與 `textDocument.publishDiagnostics`**（否則診斷管線不啟動，見上方修訂三）。
+3. 遞迴取前 **10 個 `.mjs`**（每層字典序，確保兩組開同一批），讀真實內容送 `didOpen`。
+4. 等待全語意 `tsserver` 子行程出現（排除 `partialSemantic` 那隻）並記錄 PID。
+5. **暖機 20 秒**：不驅動、不計時，讓初次索引沉澱。
+6. **主觀測窗 180 秒**，兩種驅動同時開啟，A/B 兩組驅動條件完全一致：
+   - `didChange`：每 1.5 秒送一次，每次注入一個全新的、必然無法解析的 bare import。
+   - churn：於 `~/.claude/.ata-probe/` 以實測速率（8 檔 / 30 秒）持續寫檔。
+7. CPU 量測對象為「該 tsserver **及其所有子孫行程**」的總和，**每次量測都重新展開** `ParentProcessId`（過程中可能長出新子行程，如 `typingsInstaller.js`）。
+8. **收尾觀測窗 60 秒**（資訊性，不進判準）：停掉 `didChange`、只留 churn，記為 `churnOnlyRateCores`。此時 tsserver 已真正解析過模組、監看器已註冊，這個數字才有意義。
+9. 結束後刪除 churn 目錄、終止所起的 LSP。
+
+**前置檢查（寫進腳本輸出，不靠人眼判斷）**：
+
+- `diagnosticsFilesReceived` 為空 → **BLOCKED**（`capabilities` 未生效，比較無意義），exit code 4。
+- A 組 `rateCores < 0.05` → `reproduced: false`，**BLOCKED 且不得續跑 B 組**（未重現空轉，A/B 比較無意義），exit code 3。
 
 **A 組**＝現行設定；**B 組**＝`disableAutomaticTypingAcquisition: true`。
 
 **判準（事先寫死，不得事後放寬）**：
-B 組 120 秒窗內累積 CPU **≤ A 組的 20%**，且 B 組平均速率 **< 0.1 核**。
+B 組 180 秒窗內累積 CPU **≤ A 組的 20%**，且 B 組平均速率 **< 0.1 核**。
+
+**關於 churn 的實測補充**（2026-08-09，三版腳本）：
+在**已正常運作**的 tsserver 上（診斷已送達、失敗查找監看已註冊），停掉 `didChange` 只留 churn 的
+60 秒窗實測為 **A 組 0.003 核 / B 組 0.001 核**，相對主窗的 0.173 / 0.134 幾乎沒有貢獻。
+即：**在本機這支 probe 中，主導 CPU 的是編輯流量（重複的模組解析與診斷重算），而非家目錄檔案 churn。**
+但這**不推翻** §1 的 production 診斷 —— 該診斷抓到的堆疊
+`FSWatcher._handle.onchange → scheduleInvalidateResolutionOfFailedLookupLocation`
+是真實檔案系統事件觸發的。合理解釋是本 probe 的 churn 目錄未落在 production 實際被監看的
+失敗查找位置上。churn 在 production 的貢獻度，本實驗**未能量到，亦未否證**。
 
 ### 3.3 生效證據與收尾條件
 
