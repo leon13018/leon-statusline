@@ -14,7 +14,17 @@ import { execFileSync } from 'node:child_process'
 // 4. CPU 讀不到（受保護的系統行程，`$_.CPU` 為 `$null`；實測 355 個行程中有 116 個如此）
 //    的列整列不輸出。**絕不補 0** —— 補 0 會讓那些行程的區間速率恆為 0，
 //    永遠不可能被偵測到，是靜默失效。我們要抓的 node 是使用者自己的行程，讀得到。
+// 5. stdout 編碼設為 UTF-8：Windows PowerShell 重導向輸出時預設用 OEM codepage，
+//    Node 這端以 utf8 解碼，非 ASCII 的行程名會變成混合亂碼。實測（execFileSync + piped
+//    stdout，2026-08-09）名為「測試行程守衛」的行程會被讀成 "�yԇ�г����l"
+//    —— 是 GBK 位元組被當 UTF-8 解讀的**混合**結果（夾雜 U+0079 'y'、U+0433 'г' 這類實際字元），
+//    不是單純的 U+FFFD。設了之後同一個行程正確讀回「測試行程守衛」。
+//    setter 在此呼叫路徑實測**不會拋錯**，但仍包 try/catch —— 成本為零，
+//    且萬一在別的 stdout handle 下拋了，也只該退化成亂碼而非讓整次取樣失敗。
+//    註：此項純屬顯示正確性；GBK 的前導與後續位元組都不等於 0x20，故亂碼不會多切出欄位，
+//    pid / CPU 兩欄在兩種情況下都照常剖析得出（已實測）。
 const PS_COMMAND = [
+  'try { [Console]::OutputEncoding=[Text.Encoding]::UTF8 } catch {};',
   '$ci=[Globalization.CultureInfo]::InvariantCulture;',
   'Get-Process | ForEach-Object {',
   'if ($null -ne $_.CPU) {',

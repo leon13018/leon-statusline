@@ -86,6 +86,27 @@ describe('procscan.mjs 取樣命令的靜態鎖', () => {
   it('CPU 為 $null 的行程必須整列略過，不得補 0', () => {
     expect(src).toMatch(/\$null -ne \$_\.CPU/)
   })
+  // 以下三條鎖的是 execFileSync 的**選項物件**。先前的靜態鎖只涵蓋參數陣列，
+  // 實測把 timeout / encoding / 執行檔名 / maxBuffer / windowsHide 任一改掉，167 條全綠 ——
+  // 而前兩者的爆炸半徑正是本功能存在的理由，故補上
+  it('預設 exec 必須帶 3 秒逾時與 utf8 解碼（掉了就是永久阻塞／永久靜默失效）', () => {
+    // timeout 是唯一擋住「同步阻塞取樣拖垮每一次 render」的東西 —— 那正是 tasklist 造成的災難本身；
+    // encoding 一掉就拿到 Buffer → parseProcessLines 回 null → 偵測器永久靜默失效
+    expect(src).toMatch(/timeout:\s*3000/)
+    expect(src).toMatch(/encoding:\s*'utf8'/)
+  })
+  it('必須呼叫 powershell、隱藏視窗、且保留輸出上限', () => {
+    expect(src).toMatch(/execFileSync\(\s*'powershell'/)
+    expect(src).toMatch(/windowsHide:\s*true/)
+    expect(src).toMatch(/maxBuffer:\s*8 \* 1024 \* 1024/)
+  })
+  // 實測（execFileSync + piped stdout，2026-08-09）：名稱為「測試行程守衛」的行程，
+  // 不設此項會被讀成 "�yԇ�г����l"（OEM/GBK 位元組被當 UTF-8 解讀的混合亂碼）；
+  // 設了則正確得到「測試行程守衛」。setter 本身在此路徑實測不拋，但仍包 try/catch —— 成本為零
+  it('必須把 stdout 編碼設為 UTF-8，且包 try/catch（非 ASCII 行程名否則變混合亂碼）', () => {
+    expect(src).toMatch(/\[Console\]::OutputEncoding=\[Text\.Encoding\]::UTF8/)
+    expect(src).toMatch(/try \{ \[Console\]::OutputEncoding[^}]*\} catch \{\}/)
+  })
   // 只禁「程式碼裡出現 '.exe' 字面量」（那是唯一能把副檔名接回去的手法）；
   // 註解裡提到 node.exe 是在說明這個變化，不該被鎖住
   it('不得自行補上 .exe（ProcessName 本來就不帶副檔名，補了是捏造資料）', () => {
