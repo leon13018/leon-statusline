@@ -1,8 +1,8 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readdirSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
-import { withCache } from '../src/cache.mjs'
+import { withCache, readSharedState, writeSharedState } from '../src/cache.mjs'
 
 let dir
 beforeEach(() => { dir = mkdtempSync(join(tmpdir(), 'lsl-')) })
@@ -24,5 +24,26 @@ describe('withCache', () => {
   })
   it('fn throw -> returns last cached or null', () => {
     expect(withCache('sid', 'k', 1000, () => { throw new Error() }, 1, dir)).toBe(null)
+  })
+})
+
+describe('shared state', () => {
+  it('寫入後可讀回', () => {
+    writeSharedState('runaway-state', { t: 1, procs: { 9: { name: 'a', cpu: 2, streak: 3 } } }, dir)
+    expect(readSharedState('runaway-state', dir)).toEqual({ t: 1, procs: { 9: { name: 'a', cpu: 2, streak: 3 } } })
+  })
+  it('缺檔 → null', () => {
+    expect(readSharedState('nope', dir)).toBe(null)
+  })
+  it('壞 JSON → null', () => {
+    writeFileSync(join(dir, 'broken.json'), '{ not json')
+    expect(readSharedState('broken', dir)).toBe(null)
+  })
+  it('寫入失敗不拋（目錄不存在）', () => {
+    expect(() => writeSharedState('x', { a: 1 }, join(dir, 'no-such-dir'))).not.toThrow()
+  })
+  it('不留下暫存檔', () => {
+    writeSharedState('runaway-state', { t: 1 }, dir)
+    expect(readdirSync(dir).filter(f => f.endsWith('.tmp'))).toEqual([])
   })
 })
