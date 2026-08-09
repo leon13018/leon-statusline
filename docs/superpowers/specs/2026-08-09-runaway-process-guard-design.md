@@ -130,17 +130,40 @@ B 組 180 秒窗內累積 CPU **≤ A 組的 20%**，且 B 組平均速率 **< 0
 **2. 仍予套用的理由（使用者裁決）**
 
 - **旗標生效有硬證據**：B 組行程樹只有 tsserver 一隻，**`typingsInstaller.js` 子行程完全沒有被生成**（A 組有）。這不是「設定沒吃到」。
-- **功能損失趨近於零（非嚴格為零，實測後修正）**：9 個受影響專案**根目錄**皆無 `package.json`、
-  無 `tsconfig`/`jsconfig`、無 `node_modules`（已逐一實測），故根層級本來就沒有依賴宣告可供 ATA 解析，
-  也無既有 `@types/*` 可用。
-  但**其中 7 個在深層子目錄存在 `package.json`**，多屬前端資產或子模組目錄，例如
-  `myProgram/src/WarehouseLabelCheck.Web/wwwroot/package.json`（4 個 wlc-* 專案）、
-  `graph-ui/package.json`、`leon-statusline/package.json`，以及 `alexnet` 的 19 個
-  —— 後者全部位於 `.venv/Lib/site-packages/jupyterlab/…`，屬 Python 虛擬環境內的第三方資產。
-  **因此「9 個專案皆無 `package.json`」是錯的絕對句，不可再使用。**
-  精確的說法是：**這些深層 `package.json` 都不在實際被編輯的 `.mjs` 的祖先鏈上**，
-  且 9 個專案全數無 `node_modules`，故停用 ATA 在當前使用形態下不減少任何能力；
-  **殘留的例外**是日後若直接在那些深層目錄內編輯 JS，將失去該處的 `@types/*` 自動安裝。
+- **功能損失：7/9 趨近於零，2/9 有實質損失**（經全樹掃描實測後**下修**，先前兩版措辭均過於樂觀）。
+
+  > **撰寫規則（因本節連續兩次寫出假的全稱句而訂立）**：任何量化或全稱敘述（「皆」「全數」「都」「N 個」）
+  > 寫進本文件前，**必須先以全樹掃描實測**，並在句中**明確標出範圍**（根目錄 / 全樹 / 某子目錄）。
+  > 驗不到的，就不要寫成全稱 —— 改寫成「已驗證的範圍 ＋ 已知例外」。
+
+  **已實測為真（範圍：9 個裸專案的根目錄）**：9 個根目錄皆無 `package.json`、無 `tsconfig`/`jsconfig`、
+  無 `node_modules`。故**根層級**沒有依賴宣告可供 ATA 解析。
+
+  **已實測為真（範圍：9 個裸專案全樹）**：
+
+  | 事實 | 實測值 |
+  |---|---|
+  | 全樹存在 `node_modules` 的專案 | **2 個**：`資料視覺`（8 個 `node_modules` 目錄）、`leon-statusline`（1 個） |
+  | 全樹存在既有 `@types/*` 的專案 | **2 個**：`資料視覺/graph-ui`（**16 個**：aria-query、babel__core、chai、react、three 等）、`leon-statusline/leon-statusline`（**3 個**：chai、deep-eql、estree） |
+  | 深層 `package.json`（排除 `node_modules`）的專案 | 7 個 |
+  | 深層 `package.json` **是被編輯 `.mjs` 的祖先** | **有**：`leon-statusline/leon-statusline/package.json` 是本 repo **21 個 `.mjs`** 的直接祖先（`statusline.mjs`、`src/*.mjs`、`tests/*.test.mjs`、`setup.mjs`）—— 即**我們此刻正在編輯的檔案** |
+
+  **因此以下三句均為假，不可再使用**（前一版誤寫，已作廢）：
+  ~~「9 個專案皆無 `package.json`」~~、~~「9 個專案全數無 `node_modules`」~~、
+  ~~「這些深層 `package.json` 都不在實際被編輯的 `.mjs` 的祖先鏈上」~~。
+
+  **誠實的結論**：停用 ATA 對 **7/9** 專案功能損失趨近於零（無 `node_modules`、無既有 `@types/*`）；
+  但對 **`資料視覺/graph-ui` 與 `leon-statusline/leon-statusline` 有實質損失** ——
+  這兩者有現成的 `@types/*`，且後者正是本 repo 自身、其 `package.json` 就在被編輯檔案的祖先鏈上。
+  **本條授權理由因此比原先弱。** 使用者的授權建立在**知情**、而非「零損失」之上。
+
+  深層 `package.json` 的分布（排除 `node_modules`，全樹實測）：
+  `wwwroot/package.json` 共 4 個，分屬 `倉儲辨識與前端系統` 與 3 個 `wlc-*` 專案
+  （**非**先前所寫的「4 個 wlc-*」）；另有 `資料視覺/graph-ui`、`leon-statusline/leon-statusline`；
+  `alexnet` 19 個中 **14 個**位於 `.venv/Lib/site-packages/jupyterlab/…`，
+  其餘 5 個位於 `.venv` 下的 `playwright/driver/package/`、`share/jupyter/lab/static/`、
+  `share/jupyter/labextensions/{@jupyter-notebook,@jupyter-widgets,jupyterlab_pygments}/`
+  —— **19 個全數在 `.venv` 下**，「Python 虛擬環境內第三方資產」的性質描述成立，先前錯的是具體路徑。
 - **仍省兩成**：22.7% 是真實可測的改善。
 - **風險低且可逆**：單行設定，已備份為 `plugin.json.bak-2026-08-09`，還原成本近乎零。
 

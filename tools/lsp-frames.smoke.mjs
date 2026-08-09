@@ -3,8 +3,41 @@
 //
 // 註：本 repo 的 vitest 只收 `leon-statusline/tests/**/*.test.mjs`，而 tools/ 在該 package 之外，
 // 故寫成可直接用 node 執行的獨立煙霧測試，不動既有測試設定。
+//
+// ## Watchdog（重要）
+//
+// 本解析器的回歸模式是**無限迴圈**（見 lsp-frames.mjs 檔頭的缺陷 3）。無限迴圈發生在
+// `feed()` 內部，該呼叫永遠不返回 —— 測試裡寫任何「迴圈計數上限」或耗時斷言都**走不到**，
+// 結果是整支腳本永久掛住：那是「當機」不是「測試失敗」，CI 只會看到逾時。
+//
+// 因此 watchdog 必須在卡住的呼叫**之外**：本檔預設以父行程身分把自己 spawn 成子行程並設逾時，
+// 子行程若卡死就殺掉並判定**失敗**（exit 1），確保回歸時得到的是明確的失敗而非當機。
+// 子行程由環境變數 `LSP_SMOKE_CHILD` 標記，直接執行全部案例。
+import { spawnSync } from 'node:child_process'
+import { fileURLToPath } from 'node:url'
 import { createFrameReader } from './lsp-frames.mjs'
 
+const WATCHDOG_MS = 15_000
+
+// ── 父行程：spawn 自己並看門 ──────────────────────────────────────────────
+if (!process.env.LSP_SMOKE_CHILD) {
+  const r = spawnSync(process.execPath, [fileURLToPath(import.meta.url)], {
+    env: { ...process.env, LSP_SMOKE_CHILD: '1' },
+    timeout: WATCHDOG_MS,
+    encoding: 'utf8',
+  })
+  process.stdout.write(r.stdout ?? '')
+  process.stderr.write(r.stderr ?? '')
+  const timedOut = r.error?.code === 'ETIMEDOUT' || r.signal === 'SIGTERM'
+  if (timedOut) {
+    console.log(`\n✗ watchdog：子行程逾時 ${WATCHDOG_MS}ms 未結束`)
+    console.log('  解析器極可能回歸為無限迴圈（feed() 不返回）。這是失敗，不是當機。')
+    process.exit(1)
+  }
+  process.exit(r.status ?? 1)
+}
+
+// ── 子行程：實際案例 ──────────────────────────────────────────────────────
 let pass = 0, fail = 0
 const check = (name, cond, extra = '') => {
   if (cond) { pass++; console.log(`  ok   ${name}`) }
@@ -22,8 +55,6 @@ const reader = () => {
   return [createFrameReader(m => got.push(m)), got]
 }
 
-// 所有測試都包在 watchdog 下：解析器若無限迴圈，整支腳本會停在這裡不返回，
-// 故用同步的迴圈計數上限來偵測（見 case 3 的 hostile 輸入）。
 console.log('lsp-frames 煙霧測試')
 
 // 1. 基本：一個 chunk 一則訊息
@@ -91,8 +122,7 @@ console.log('lsp-frames 煙霧測試')
 {
   const [feed, got] = reader()
   const f = frame({ method: '多位元組', text: '中文中文中文' })
-  // 找一個落在 UTF-8 多位元組序列中間的切點
-  const cut = f.length - 7
+  const cut = f.length - 7   // 落在 UTF-8 多位元組序列中間
   feed(f.subarray(0, cut))
   feed(f.subarray(cut))
   check('多位元組字元跨 chunk 不被切壞', got.length === 1 && got[0].text === '中文中文中文', JSON.stringify(got))
@@ -109,8 +139,8 @@ console.log('lsp-frames 煙霧測試')
   check('壞 JSON 被跳過且不卡死', got.length === 1 && got[0].method === 'afterBadJson', JSON.stringify(got))
 }
 
-// 10. ⚠️ 終極防呆：連續餵大量畸形標頭段，必須在有限時間內返回。
-//     若解析器有原地打轉的路徑，這裡會直接掛住（測試逾時即為失敗）。
+// 10. ⚠️ 終極防呆：連續餵大量畸形標頭段。
+//     若解析器有原地打轉的路徑，這裡會卡在 feed() 內 —— 由父行程的 watchdog 判定失敗。
 {
   const [feed, got] = reader()
   const t0 = Date.now()
@@ -127,6 +157,22 @@ console.log('lsp-frames 煙霧測試')
   for (let i = 0; i < 40; i++) feed(Buffer.alloc(8 * 1024, 0x41))   // 320KB 的 'A'，無 \r\n\r\n
   feed(frame({ method: 'recovered' }))
   check('巨量無終止符垃圾後仍能恢復解析', got.length === 1 && got[0].method === 'recovered', JSON.stringify(got))
+}
+
+// 12. onMessage 拋例外不得逃出 feed()（否則 uncaughtException 會讓呼叫端的 finally 不執行，
+//     churn 目錄與 LSP 行程殘留）。後續訊息仍須繼續處理。
+{
+  const seen = []
+  const feed = createFrameReader(m => {
+    seen.push(m.method)
+    if (m.method === 'boom') throw new TypeError("Cannot read properties of undefined (reading 'uri')")
+  })
+  let threw = false
+  try {
+    feed(Buffer.concat([frame({ method: 'boom' }), frame({ method: 'afterBoom' })]))
+  } catch { threw = true }
+  check('onMessage 拋例外不會逃出 feed()', !threw)
+  check('onMessage 拋例外後仍繼續處理後續訊息', seen.length === 2 && seen[1] === 'afterBoom', JSON.stringify(seen))
 }
 
 console.log(`\n通過 ${pass} 項，失敗 ${fail} 項`)

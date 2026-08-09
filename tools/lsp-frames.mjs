@@ -22,9 +22,12 @@ const MAX_HEADER_BYTES = 64 * 1024   // 尚未出現標頭終止符時的累積�
 /**
  * 建立一個 chunk 消費函式：把每個收到的 Buffer 餵進去，解析完整的訊息就呼叫 onMessage。
  * @param {(msg: any) => void} onMessage 收到一則完整且能 JSON.parse 的訊息時呼叫
+ * @param {(err: Error, msg: any) => void} [onError] onMessage 拋例外時的處理；
+ *        預設印到 stderr 並continue。無論如何都不會讓例外逃出，以保證呼叫端的 finally 清理必定執行。
  * @returns {(chunk: Buffer|string) => void}
  */
-export const createFrameReader = onMessage => {
+export const createFrameReader = (onMessage, onError = err =>
+  console.error(`[lsp-frames] onMessage 拋出例外，已忽略該則訊息：${err?.message ?? err}`)) => {
   let buf = Buffer.alloc(0)
 
   return chunk => {
@@ -61,7 +64,11 @@ export const createFrameReader = onMessage => {
 
       let msg
       try { msg = JSON.parse(body) } catch { continue }   // 此時緩衝區已前進，continue 安全
-      onMessage(msg)
+
+      // onMessage 的例外**絕不可**逃出這裡：它是在 stdout 的 'data' 事件裡被呼叫的，
+      // 拋出去就是 uncaughtException → 呼叫端的 finally 不會執行 → churn 目錄與 LSP 行程殘留
+      // （牴觸「實驗必須自行清理」）。典型觸發：訊息缺 params.uri 導致 TypeError。
+      try { onMessage(msg) } catch (err) { onError(err, msg) }
     }
   }
 }
