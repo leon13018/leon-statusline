@@ -98,6 +98,9 @@ export function detect({ now, readState, writeState, sample, cfg } = {}) {
   }
 
   const { flagged, nextState } = classify(base, s, now, opts)
+  // 注意：成功取樣寫回的狀態刻意不帶 attemptedAt（classify 的 nextState 只有 t/procs）。
+  // 這是「成功即清除」而非疏漏：此刻 t === now，而 lastAttempt() 在沒有 attemptedAt 時會退回 t，
+  // 節流基準完全相同。留著反而是兩個會漂移的真相來源
   // classify 判不出來時會原樣回吐 base；此時不得寫入，否則 t 不前進＝節流失效、flagged 被洗掉
   if (nextState && nextState !== base) { try { writeState({ ...nextState, flagged }) } catch {} }
   return flagged

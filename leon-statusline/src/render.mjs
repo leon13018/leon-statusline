@@ -101,8 +101,10 @@ export function renderLine4(d, deps) {
 // 一則「零噪音」，二則沒有 PID／名稱的警告對使用者毫無用處
 // 判準刻意不重述 runaway.mjs 的 valid()，別把它當成上游語義的副本：
 // pid 放寬（不管整數／正負，印得出來就好）—— 這半由上游 valid() 的 Number.isInteger && >= 0 結構性擋住；
-// name 收緊（空字串印出來只是噪音）—— 這半沒有上游保證：valid() 放行空字串（procscan.mjs:21 是裸的
-// name: f[0]），只仰賴 tasklist 不吐空 Image Name，實測 classify 確實能產出 name:'' 的列。
+// name 收緊（空字串印出來只是噪音）—— runaway.mjs 的 valid() 本身仍放行空字串，
+// 實測 classify 餵入 name:'' 確實能產出 name:'' 的 flagged 列。
+// （取樣端另有一層：procscan.mjs 的 ROW_RE 用 (.+) 要求名稱至少一字元，故正常取樣不會產生空名，
+//   但那是取樣實作的細節，不是 classify 的契約，validFlag 不該倚賴它。）
 // 且兩處在磁碟狀態損毀、繞過 valid() 時皆可達 —— 那正是 validFlag 存在的用途。
 const validFlag = f =>
   !!f && typeof f === 'object' &&

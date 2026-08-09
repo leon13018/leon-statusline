@@ -457,6 +457,43 @@ describe('detect 的節流與防呆', () => {
     expect(disk.procs[9].streak).toBe(0)
   })
 
+  // 「絕不寫回垃圾」是承重不變量，但先前只有「判不出來就整個不寫」那條路徑有測試保護。
+  // 取樣失敗的路徑是一定會寫的（要推進 attemptedAt），此時 attemptOnly 的畸形 base 防呆
+  // （runaway.mjs:65-67 的 usable）是唯一防線 —— 把它降級成 !!base 時 161 條測試全綠，
+  // 卻會寫出 {"t":undefined,"procs":undefined,...}。真機可達：狀態檔損毀 ＋ 取樣失敗
+  it('畸形狀態 ＋ 取樣失敗 → 寫出的狀態必須 t 有限、procs 為純物件（絕不寫回垃圾）', () => {
+    const bases = [
+      ['陣列', ['垃', '圾']],
+      ['字串', '壞掉的狀態檔'],
+      ['數字', 7],
+      ['t 非數字', { t: 'x', procs: {}, flagged: [] }],
+      ['缺 t', { procs: {}, flagged: [] }],
+      ['procs 是陣列', { t: 0, procs: ['垃圾'], flagged: [] }],
+      ['procs 是 null', { t: 0, procs: null, flagged: [] }],
+      ['procs 缺席', { t: 0, flagged: [] }],
+    ]
+    for (const [label, disk] of bases) {
+      let written = 'NOT_CALLED'
+      const out = detect({
+        now: 10 * SCAN_INTERVAL_MS,
+        readState: () => disk,
+        writeState: s => { written = s },
+        sample: () => null,                     // 取樣失敗 → 必定走 attemptOnly 這條路
+      })
+      expect({ label, out }).toEqual({ label, out: [] })
+      expect({ label, called: written !== 'NOT_CALLED' }).toEqual({ label, called: true })
+      // 斷言打在缺陷實際發生的那一格：寫出去的那個物件本身
+      expect({ label, t: Number.isFinite(written.t) }).toEqual({ label, t: true })
+      const procsOk = !!written.procs && typeof written.procs === 'object' && !Array.isArray(written.procs)
+      expect({ label, procsOk }).toEqual({ label, procsOk: true })
+      expect({ label, flagged: Array.isArray(written.flagged) }).toEqual({ label, flagged: true })
+      expect({ label, at: Number.isFinite(written.attemptedAt) }).toEqual({ label, at: true })
+      // 寫出去的東西必須能安全地再被讀回來（JSON 往返後不得出現 undefined 欄位）
+      expect({ label, round: JSON.parse(JSON.stringify(written)) })
+        .toEqual({ label, round: { t: written.t, procs: {}, flagged: [], attemptedAt: 10 * SCAN_INTERVAL_MS } })
+    }
+  })
+
   it('缺參數或 cfg 畸形一律不拋錯，並回空陣列', () => {
     expect(detect()).toEqual([])
     expect(detect({})).toEqual([])
