@@ -174,16 +174,25 @@ describe('detect', () => {
     expect(written.procs[1].streak).toBe(5)
     expect(written.flagged).toEqual(out)
   })
-  it('取樣回 null → 沿用上次 flagged，且不寫入', () => {
-    let written = false
+  // 原本這條斷言「不寫入」。整合階段證明那個前提（取樣失敗很罕見）是錯的：
+  // 取樣恆失敗時「不寫入」＝節流基準永不前進＝每次 render 都重新取樣。
+  // 新契約：判定用的 t/procs/flagged 原樣保留，只多記一個 attemptedAt 讓節流走得下去
+  it('取樣回 null → 沿用上次 flagged，只推進 attemptedAt 而不動 t/procs', () => {
+    let written = null
+    const now = 10 * SCAN_INTERVAL_MS
     const out = detect({
-      now: 10 * SCAN_INTERVAL_MS,
-      readState: () => ({ t: 0, procs: {}, flagged: flaggedOne }),
-      writeState: () => { written = true },
+      now,
+      readState: () => ({ t: 0, procs: { 1: { name: 'a.exe', cpu: 5, streak: 4 } }, flagged: flaggedOne }),
+      writeState: s => { written = s },
       sample: () => null,
     })
     expect(out).toEqual(flaggedOne)
-    expect(written).toBe(false)
+    expect(written).toEqual({
+      t: 0,                                    // 快照時間基準不動
+      procs: { 1: { name: 'a.exe', cpu: 5, streak: 4 } },
+      flagged: flaggedOne,
+      attemptedAt: now,
+    })
   })
   it('首次執行（無狀態）→ 空陣列並建立基準', () => {
     let written = null
@@ -354,17 +363,100 @@ describe('detect 的節流與防呆', () => {
     })
     expect({ out, sampled, written }).toEqual({ out: [], sampled: 0, written: 0 })
   })
-  it('sample 拋錯 → 沿用上次 flagged 且不寫入', () => {
-    let written = false
+  // sample 拋錯與 sample 回 null 走同一條路（procscan 兩種失敗都可能發生：逾時會拋、解析不出會回 null）
+  it('sample 拋錯 → 沿用上次 flagged，且同樣推進 attemptedAt', () => {
+    let written = null
     const out = detect({
       now: SCAN_INTERVAL_MS,
       readState: () => ({ t: 0, procs: {}, flagged: flaggedOne }),
-      writeState: () => { written = true },
+      writeState: s => { written = s },
       sample: () => { throw new Error('tasklist 掛了') },
     })
     expect(out).toEqual(flaggedOne)
-    expect(written).toBe(false)
+    expect(written).toEqual({ t: 0, procs: {}, flagged: flaggedOne, attemptedAt: SCAN_INTERVAL_MS })
   })
+
+  // 沒有任何既有狀態時（本機的實際處境：狀態檔從未建立成功）也必須立起節流基準，
+  // 否則「取樣失敗 → 無狀態可推進 → 下次仍立刻取樣」的迴圈原封不動
+  it('無狀態且取樣失敗 → 仍寫出乾淨的空基準，讓節流從第二次 render 起生效', () => {
+    let disk = null, sampled = 0
+    const run = now => detect({
+      now,
+      readState: () => disk,
+      writeState: s => { disk = s },
+      sample: () => { sampled += 1; return null },
+    })
+    expect(run(1000)).toEqual([])
+    expect(disk).toEqual({ t: 1000, procs: {}, flagged: [], attemptedAt: 1000 })
+    run(1000 + SCAN_INTERVAL_MS - 1)
+    expect(sampled).toBe(1)                    // 第二次 render 被節流擋下，沒有再付一次取樣成本
+  })
+  // 取樣失敗不是罕見情境：整合階段實測本機 tasklist /v 需約 29.5 秒，恆超過 procscan 的 3 秒逾時，
+  // 也就是說「取樣永遠失敗」在真機上是常態。舊行為在失敗時完全不寫狀態 → 節流基準永不前進
+  // → 每一次 render 都得再付一次完整的取樣成本，「每分鐘至多一次」退化成「每次 render 一次」
+  it('取樣恆失敗時節流仍生效：sample 呼叫次數＝經過時間÷間隔，不是 render 次數', () => {
+    let disk = null, sampled = 0
+    const run = now => detect({
+      now,
+      readState: () => disk,
+      writeState: s => { disk = s },
+      sample: () => { sampled += 1; return null },
+    })
+    const STEP = 10_000                       // statusline 的 refreshInterval 是 10 秒
+    const SPAN = 5 * SCAN_INTERVAL_MS
+    let renders = 0
+    for (let now = 0; now < SPAN; now += STEP) { run(now); renders += 1 }
+    expect(renders).toBe(30)
+    expect(sampled).toBe(SPAN / SCAN_INTERVAL_MS)   // 5，而不是 30
+  })
+
+  // 防止「為了修節流而把判定狀態洗掉」：t（procs 快照的時間基準）與 procs 都必須原樣保留，
+  // 否則恢復取樣時會拿舊快照的 cpu 差去除以被推進過的短區間 → 速率高估 → 誤報
+  it('取樣失敗數輪後恢復 → streak 不重置且區間速率算得正確', () => {
+    let disk = null, ok = true, sampled = 0
+    const run = now => detect({
+      now,
+      readState: () => disk,
+      writeState: s => { disk = s },
+      // 恆定 1.0 核：cpuSeconds 與牆鐘同步成長
+      sample: () => { sampled += 1; return ok ? [{ pid: 9, name: 'hog.exe', cpuSeconds: now / 1000 }] : null },
+    })
+    for (let i = 0; i <= 3; i += 1) run(i * MIN)          // 基準 + 3 個超標區間 → streak 3
+    expect(disk.procs[9].streak).toBe(3)
+    ok = false
+    run(4 * MIN); run(5 * MIN)                            // 連兩輪取樣失敗
+    expect(disk.procs[9].streak).toBe(3)                  // 狀態沒被洗掉
+    expect(disk.procs[9].cpu).toBe(180)                   // 快照仍是最後一次成功取樣的值
+    ok = true
+    expect(run(6 * MIN)).toEqual([])                      // 恢復：第 4 個區間，還沒滿 5
+    expect(disk.procs[9].streak).toBe(4)
+    const out = run(7 * MIN)
+    expect(disk.procs[9].streak).toBe(CONSECUTIVE_REQUIRED)
+    // 速率必須是 1（真實值）。若失敗時把 t 一併推進，這裡會算成 3 之類的高估值
+    expect(out).toEqual([{ pid: 9, name: 'hog.exe', rate: 1 }])
+    expect(sampled).toBe(8)                               // 每個區間各一次，失敗的兩次也算
+  })
+
+  // 上一條其實抓不到「t 也一起推進」這個變體（實測：那個變體下最後一個區間的速率仍是 1）。
+  // 這條專門釘住它：把 t 一起推進會縮短區間、高估速率，讓真實只用 0.2 核的行程被算成 1.0 核
+  it('取樣失敗期間 t 不得推進：恢復後的速率以「上次成功取樣」為基準，不得高估', () => {
+    let disk = null, ok = true
+    const run = now => detect({
+      now,
+      readState: () => disk,
+      writeState: s => { disk = s },
+      sample: () => ok ? [{ pid: 9, name: 'idle.exe', cpuSeconds: 0.2 * (now / 1000) }] : null,
+      cfg: { required: 1 },                    // 一個超標區間就標記，讓速率直接可觀測
+    })
+    run(0)                                     // 基準
+    ok = false
+    for (let i = 1; i <= 4; i += 1) run(i * MIN)
+    ok = true
+    // 真實 0.2 核 < 0.5 門檻 → 不得標記。t 若被一起推進，區間會從 300 秒縮成 60 秒 → 誤算成 1.0 核
+    expect(run(5 * MIN)).toEqual([])
+    expect(disk.procs[9].streak).toBe(0)
+  })
+
   it('缺參數或 cfg 畸形一律不拋錯，並回空陣列', () => {
     expect(detect()).toEqual([])
     expect(detect({})).toEqual([])
