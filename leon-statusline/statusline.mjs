@@ -4,8 +4,10 @@ import { parseInput } from './src/input.mjs'
 import { buildOutput } from './src/render.mjs'
 import { gitInfo } from './src/git.mjs'
 import { countInfra, readJson } from './src/count.mjs'
-import { withCache } from './src/cache.mjs'
+import { withCache, readSharedState, writeSharedState } from './src/cache.mjs'
 import { autoCompactThreshold, autoCompactWindow } from './src/compact.mjs'
+import { sampleProcesses } from './src/procscan.mjs'
+import { detect } from './src/runaway.mjs'
 
 async function main() {
   let out = ''
@@ -29,6 +31,13 @@ async function main() {
       counts: cwd => cwd ? withCache(sid, 'counts', 60000, () => countInfra(cwd, home)) : null,
       autoCompactThreshold: autoCompactThreshold(),
       autoCompactWindow: autoCompactWindow([userSettings]),
+      // 失控行程守衛：跨 session 共用狀態，內部自帶節流（最多每 60 秒實際取樣一次）
+      runaway: () => detect({
+        now: Date.now(),
+        readState: () => readSharedState('runaway-state'),
+        writeState: s => writeSharedState('runaway-state', s),
+        sample: () => sampleProcesses(),
+      }),
     }
     out = buildOutput(d, deps)
     if (!out) out = d.model?.display_name || 'claude'

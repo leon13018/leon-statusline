@@ -96,7 +96,40 @@ export function renderLine4(d, deps) {
   return joinLine(parts)
 }
 
+// flagged 的元素形狀來自磁碟狀態（節流命中時 detect 直接回吐 state.flagged，未逐列重驗），
+// 損毀或被竄改時任意 JSON 垃圾都會進到這裡。畸形列一律略過而非渲染成 '?'：
+// 一則「零噪音」，二則沒有 PID／名稱的警告對使用者毫無用處
+// 判準刻意不重述 runaway.mjs 的 valid()，別把它當成上游語義的副本：
+// pid 放寬（不管整數／正負，印得出來就好）—— 這半由上游 valid() 的 Number.isInteger && >= 0 結構性擋住；
+// name 收緊（空字串印出來只是噪音）—— runaway.mjs 的 valid() 本身仍放行空字串，
+// 實測 classify 餵入 name:'' 確實能產出 name:'' 的 flagged 列。
+// （取樣端另有一層：procscan.mjs 的 ROW_RE 用 (.+) 要求名稱至少一字元，故正常取樣不會產生空名，
+//   但那是取樣實作的細節，不是 classify 的契約，validFlag 不該倚賴它。）
+// 且兩處在磁碟狀態損毀、繞過 valid() 時皆可達 —— 那正是 validFlag 存在的用途。
+const validFlag = f =>
+  !!f && typeof f === 'object' &&
+  Number.isFinite(f.pid) &&
+  typeof f.name === 'string' && f.name !== '' &&
+  Number.isFinite(f.rate)
+
+// 第 5 行：僅在偵測到持續失控的行程時出現；否則回 ''，由 buildOutput 的 filter 自動略過
+// 只提示，絕不提供也絕不執行任何終止行程的手段
+export function renderLine5(d, deps) {
+  let flagged = null
+  // try 只圈住外部注入的呼叫；其餘程式碼靠 validFlag 保證不會 throw，
+  // 免得自己的格式化 bug 被靜默吞掉
+  try { flagged = deps.runaway ? deps.runaway() : null } catch { flagged = null }
+  const rows = Array.isArray(flagged) ? flagged.filter(validFlag) : []
+  if (rows.length === 0) return ''
+  const shown = rows.slice(0, 2).map(f => `${f.name}(${f.pid}) ${f.rate.toFixed(2)}c`).join(', ')
+  const extra = rows.length > 2 ? ` +${rows.length - 2}` : ''
+  return joinLine([
+    colorize(`⚠ runaway:${rows.length}`, RED),
+    colorize(shown + extra, RED),
+  ])
+}
+
 export function buildOutput(d, deps) {
-  const lines = [renderLine1(d, deps), renderLine2(d, deps), renderLine3(d, deps), renderLine4(d, deps)]
+  const lines = [renderLine1(d, deps), renderLine2(d, deps), renderLine3(d, deps), renderLine4(d, deps), renderLine5(d, deps)]
   return lines.filter(l => l && l.length).join('\n')
 }
