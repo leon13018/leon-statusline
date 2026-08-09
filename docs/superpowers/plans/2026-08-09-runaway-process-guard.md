@@ -101,9 +101,23 @@ Expected: `hasFlag: true`。**記下 `cpuSeconds`。**
 
 **結論**：`disableAutomaticTypingAcquisition` **確實生效**（B 組完全沒有 `typingsInstaller` 子行程，
 這是機制生效的直接證據），但 ATA **不是** CPU 的主要來源 —— 主導成本是每次 `didChange` 觸發的
-模組解析與診斷重算，停用 ATA 只削掉約兩成。故 Step 5–8 未執行，待使用者裁決（見 spec §3.3 收尾條件）。
+模組解析與診斷重算，停用 ATA 只削掉約兩成。
 
-- [ ] **Step 5: 備份並修改 win-lsp 設定**
+**處置（2026-08-09 使用者裁決）：判準未通過，但經明示授權**越過量化閘門**，仍套用 Step 5、6，Part 1 結案轉進 Part 2。**
+**這不是驗收通過。** 完整理由、侷限與長期驗收機制見 spec §3.4，摘要：
+
+- **仍套用的理由**：旗標生效有硬證據（B 組無 `typingsInstaller`）；9 個受害專案皆無 `package.json` /
+  `node_modules`，停用 ATA **功能損失為零**；實測仍省 22.7%；單行設定、已備份、可逆。
+- **侷限（不得省略）**：probe 以每 1.5 秒一次、連續 3 分鐘的編輯驅動，強度遠高於真人編輯，
+  該強度下 B 組的 0.134 核較接近**正常工作**而非病態；production 的病態是**無人編輯卻連燒 15 小時 1.0 核**，
+  **三輪實驗均未重現該本體**；churn-only 僅 0.003 核，亦未重現 §1 診斷的 `FSWatcher` 堆疊。
+  → **本實驗證明旗標有效且 ATA 約佔兩成，但未能重現 production 的空轉本體；ATA 是否為該本體的主因，仍未證實。**
+- **`jsconfig.json` 路線暫不執行**：保留為日後選項（新證據指向診斷重算而非失敗查找，其效益同樣未經驗證，
+  且會動到 9 個專案的檔案）。
+- **後續驗收改為長期觀察**：Part 2 偵測器上線後，tsserver 若再度失控會在 5 分鐘內被標記；
+  **若再度被標記，即代表 Part 1 未根治，需重啟 `jsconfig.json` 路線。**
+
+- [x] **Step 5: 備份並修改 win-lsp 設定**
 
 win-lsp 不是 git repo，故先備份：
 
@@ -130,7 +144,10 @@ cp "C:/Users/LIN HONG/.claude/local-plugins/win-lsp/plugin/.claude-plugin/plugin
       "initializationOptions": { "disableAutomaticTypingAcquisition": true },
 ```
 
-- [ ] **Step 6: 刪除家目錄殘骸**
+**已完成（2026-08-09）**：備份為 `plugin.json.bak-2026-08-09`（2642 bytes，與原檔一致）；
+`Compare-Object` 確認**僅新增上述一行**，JSON 合法、9 個 lspServers 全數保留。
+
+- [x] **Step 6: 刪除家目錄殘骸**
 
 先確認為空（僅 `.bin`、0 MB）再刪：
 
@@ -142,7 +159,10 @@ Expected: `Count: 0`、`Sum:`（空）。確認後：
 powershell -NoProfile -Command "Remove-Item -Recurse -Force 'C:\Users\LIN HONG\node_modules'"
 ```
 
-- [ ] **Step 7: 生效證據（spec §3.3）**
+**已完成（2026-08-09 17:00）**：刪除前重新確認 `Count: 0`、`Sum:` 空、`.bin` 內 0 個項目，
+確認後刪除，`Test-Path` 回 `False`。
+
+- [ ] **Step 7: 生效證據（spec §3.3）** —— **本 task 跳過，由控制端另行安排重啟後驗證**
 
 重啟 Claude Code（讓 LSP 以新設定重起），然後：
 
@@ -151,12 +171,22 @@ powershell -NoProfile -Command "Get-CimInstance Win32_Process | Where-Object { $
 ```
 Expected: 每一條全語意 tsserver 命令列都含 `--disableAutomaticTypingAcquisition`。
 
-- [ ] **Step 8: Commit**
+> ⚠️ **設定已改，但現行行程仍是舊設定。** 改動當下實測 4 隻全語意 tsserver 全數
+> `HasFlag: False`（皆早於改動啟動，最久的已跑 385 分鐘、累計 938 CPU 秒），
+> 4 隻 `typingsInstaller` 仍在。**必須重啟才會生效。**
+> 另注意上面的 `-notlike '*partialSemantic*'` 過濾不可省 ——
+> partialSemantic server 本來就帶這個旗標，會造成誤判為已生效。
+
+- [x] **Step 8: Commit**
 
 ```bash
 git add tools/ata-storm.mjs
 git commit -m "test(tools): tsserver 自動型別擷取風暴 A/B 實驗腳本"
 ```
+
+**實際**：分兩次提交。`a7836bb` 為腳本三版 ＋ spec/plan 實驗方法修訂；
+結案的文件修訂（spec §3.4、plan 本節）另行提交。
+win-lsp `plugin.json` 在 repo 之外且非 git 管理，**不進 commit**，僅以 `.bak-2026-08-09` 備份保全。
 
 ---
 
