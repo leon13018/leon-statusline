@@ -150,16 +150,17 @@ describe('classify 的全域限制', () => {
 describe('detect', () => {
   const flaggedOne = [{ pid: 1, name: 'a.exe', rate: 1 }]
 
+  // 註：brief 原文此處的 writeState 是「被呼叫就 throw」的哨兵，但 detect 的 try/catch 會吞掉它
+  // ——哨兵零作用。依審查要求改為計數器（語義相同、只是真的驗得到），sample 也改回有效樣本
   it('未達掃描間隔 → 不取樣，直接回快取的 flagged', () => {
-    let sampled = false
+    let sampled = 0, written = 0
     const out = detect({
       now: 1000 + SCAN_INTERVAL_MS - 1,
       readState: () => ({ t: 1000, procs: {}, flagged: flaggedOne }),
-      writeState: () => { throw new Error('不該被呼叫') },
-      sample: () => { sampled = true; return [] },
+      writeState: () => { written += 1 },
+      sample: () => { sampled += 1; return [{ pid: 1, name: 'a.exe', cpuSeconds: 60 }] },
     })
-    expect(out).toEqual(flaggedOne)
-    expect(sampled).toBe(false)
+    expect({ out, sampled, written }).toEqual({ out: flaggedOne, sampled: 0, written: 0 })
   })
   it('達間隔 → 取樣、判定並寫入狀態', () => {
     let written = null
@@ -215,16 +216,18 @@ describe('detect', () => {
 // 也是 classify 對極短 dt 無下限的唯一防線 —— 以下把這條界線釘死
 describe('detect 的節流與防呆', () => {
   const flaggedOne = [{ pid: 1, name: 'a.exe', rate: 1 }]
-  const nope = who => () => { throw new Error(`${who} 不該被呼叫`) }
-
+  // ⚠ 本檔一律用「計數器」而非「被呼叫就 throw」的哨兵驗證「某個注入的 I/O 不得被呼叫」：
+  // detect 對 readState / writeState / sample 全都包了 try/catch（那是它「絕不 crash」的本體），
+  // 哨兵拋的錯會被吞掉，測試反而走上安全路徑而假綠。這裡踩過兩次，別再引入 throw 哨兵。
   it('極短 dt（1ms）不可能走到取樣與判定', () => {
+    let sampled = 0, written = 0
     const out = detect({
       now: 1001,
       readState: () => ({ t: 1000, procs: { 1: { name: 'a.exe', cpu: 0, streak: 4 } }, flagged: [] }),
-      writeState: nope('writeState'),
-      sample: nope('sample'),
+      writeState: () => { written += 1 },
+      sample: () => { sampled += 1; return [{ pid: 1, name: 'a.exe', cpuSeconds: 60 }] },
     })
-    expect(out).toEqual([])
+    expect({ out, sampled, written }).toEqual({ out: [], sampled: 0, written: 0 })
   })
   it('now 非有限數（時鐘壞掉）→ 不取樣、不寫入，回快取的 flagged', () => {
     // 若讓它往下走：classify 判不出來 → 寫回原樣的 t → 節流永久失效，每次 render 都同步取樣一次
@@ -254,6 +257,36 @@ describe('detect 的節流與防呆', () => {
     expect(disk.t).toBe(1000)                 // 時鐘恢復後，仍以原基準續判
     expect(run(1000 + SCAN_INTERVAL_MS)).toEqual(flaggedOne)
     expect(sampled).toBe(1)
+  })
+  it('基準落在未來（時鐘往回跳）→ 視同無基準重建，不是一路早退', () => {
+    // (now - t) 為大負數時恆 < interval，若照節流早退，偵測器會停擺到時鐘追上為止且毫無跡象
+    let written = null, sampled = 0
+    const out = detect({
+      now: 1000,
+      readState: () => ({ t: 10_000_000, procs: { 1: { name: 'a.exe', cpu: 0, streak: 4 } }, flagged: flaggedOne }),
+      writeState: s => { written = s },
+      sample: () => { sampled += 1; return [{ pid: 1, name: 'a.exe', cpuSeconds: 60 }] },
+    })
+    expect(out).toEqual([])
+    expect(sampled).toBe(1)
+    expect(written).toEqual({ t: 1000, procs: { 1: { name: 'a.exe', cpu: 60, streak: 0 } }, flagged: [] })
+  })
+  it('時鐘往回跳後一輪就重建基準，之後回到正常節流', () => {
+    let disk = { t: 10_000_000, procs: { 1: { name: 'a.exe', cpu: 0, streak: 4 } }, flagged: flaggedOne }
+    let sampled = 0
+    const run = now => detect({
+      now,
+      readState: () => disk,
+      writeState: s => { disk = s },
+      sample: () => { sampled += 1; return [{ pid: 1, name: 'a.exe', cpuSeconds: 60 + sampled * 60 }] },
+    })
+    run(1000)
+    expect(disk.t).toBe(1000)                 // 基準已重建於當下
+    run(1000 + SCAN_INTERVAL_MS - 1)          // 重建後節流照常生效
+    expect(sampled).toBe(1)
+    run(1000 + SCAN_INTERVAL_MS)
+    expect(sampled).toBe(2)
+    expect(disk.t).toBe(1000 + SCAN_INTERVAL_MS)
   })
   it('狀態是陣列 → 不寫出 {"0":..} 這種垃圾狀態', () => {
     // typeof [] === 'object'，光靠 typeof 守衛擋不住；判不出來就整個不寫才擋得住
@@ -311,14 +344,15 @@ describe('detect 的節流與防呆', () => {
     expect(out).toEqual([])
     expect(written).toEqual({ t: 5000, procs: { 1: { name: 'a.exe', cpu: 3, streak: 0 } }, flagged: [] })
   })
-  it('快取的 flagged 非陣列 → 回空陣列', () => {
+  it('快取的 flagged 非陣列 → 回空陣列，且仍在節流期內不取樣', () => {
+    let sampled = 0, written = 0
     const out = detect({
       now: 1001,
       readState: () => ({ t: 1000, procs: {}, flagged: '壞掉' }),
-      writeState: nope('writeState'),
-      sample: nope('sample'),
+      writeState: () => { written += 1 },
+      sample: () => { sampled += 1; return [{ pid: 1, name: 'a.exe', cpuSeconds: 60 }] },
     })
-    expect(out).toEqual([])
+    expect({ out, sampled, written }).toEqual({ out: [], sampled: 0, written: 0 })
   })
   it('sample 拋錯 → 沿用上次 flagged 且不寫入', () => {
     let written = false

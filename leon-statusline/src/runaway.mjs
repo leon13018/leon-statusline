@@ -58,14 +58,17 @@ export function detect({ now, readState, writeState, sample, cfg } = {}) {
 
   // 早退必須在 sample() 之前：取樣是同步阻塞的外部命令，且 classify 對極短 dt 無下限
   if (!Number.isFinite(now)) return cached   // 時鐘壞掉：不取樣也不寫入，否則節流會永久失效
-  if (state && Number.isFinite(state.t) && (now - state.t) < interval) return cached
+  const dt = state && Number.isFinite(state.t) ? now - state.t : null
+  if (dt !== null && dt >= 0 && dt < interval) return cached
+  // 基準落在未來（時鐘往回撥／NTP 校正）→ 丟掉基準重建，否則會一路早退到時鐘追上為止
+  const base = dt !== null && dt < 0 ? null : state
 
   let s = null
   try { s = sample() } catch { s = null }
   if (!s) return cached                      // 取樣失敗：沿用上次結果，不更新狀態
 
-  const { flagged, nextState } = classify(state, s, now, opts)
-  // classify 判不出來時會原樣回吐 state；此時不得寫入，否則 t 不前進＝節流失效、flagged 被洗掉
-  if (nextState && nextState !== state) { try { writeState({ ...nextState, flagged }) } catch {} }
+  const { flagged, nextState } = classify(base, s, now, opts)
+  // classify 判不出來時會原樣回吐 base；此時不得寫入，否則 t 不前進＝節流失效、flagged 被洗掉
+  if (nextState && nextState !== base) { try { writeState({ ...nextState, flagged }) } catch {} }
   return flagged
 }
