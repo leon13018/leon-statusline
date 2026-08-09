@@ -1076,10 +1076,17 @@ git commit -m "feat(statusline): 進入點注入失控行程守衛 + bump 1.5.0"
 （把它降級成 `!!base` 時 161 條測試全綠，卻會寫出 `{"t":undefined,"procs":undefined,…}`；
 真機可達：狀態檔損毀 ＋ 取樣失敗）。已補一條表格式測試並以突變確認轉紅。
 
-**驗收（實測，2026-08-09）**：`npx vitest run` → 12 檔 167 測試全綠、exit 0。
+**審查後補強（同日，Task 8 審查的 I-1 與四項準確性修正）**：
+
+- 靜態鎖原本只涵蓋**參數陣列**，`execFileSync` 的**選項物件**完全沒鎖。實地突變確認：刪 `timeout: 3000`、刪 `encoding: 'utf8'`、換掉執行檔名、`maxBuffer` 改成 16 bytes、刪 `windowsHide` —— 五者當時皆 **167 全綠**。已補 2 條靜態鎖涵蓋這五項。
+- `[Console]::OutputEncoding` 從「刻意不設」改為「設，且包 `try/catch`」。原本的理由（setter 可能拋錯，一拋就賭掉整個功能）**經實測證偽**：在 `execFileSync` + piped stdout 這個實際路徑上 setter 不拋。實測名為 `測試行程守衛` 的探測行程，不設會被讀成混合亂碼、設了則正確。已補第 3 條靜態鎖。
+- spec §5.1 新增「已知限制」小節：**以系統管理員身分啟動的失控行程偵測不到**。機制是取樣行程的權杖查詢不到完整性等級更高的行程（實測取樣行程未提權）。最直接的證據是 `nvcontainer` / `parsecd` 各有兩個實例同在使用者 session 1，一個讀得到 CPU、一個讀不到。§9 補上「不為此讓狀態列提權」的非目標。
+
+**驗收（實測，2026-08-09）**：`npx vitest run` → 12 檔 **170** 測試全綠、exit 0。
 端對端刪掉狀態檔後連跑 `statusline.mjs` 4 次：484 / 58 / 59 / 60ms，皆 exit 0、皆 4 行、無 `.tmp` 殘留；
 狀態檔 13156 bytes、`procs` **239 筆**（修復前恆為 `{}`），`flagged` 為空（無誤報）。
-7 個突變全數轉紅（矩陣見 `.superpowers/sdd/2026-08-09-runaway-process-guard/task-8b-report.md`）。
+突變測試共 14 個全數轉紅（首輪 7 個 + 審查後補強 7 個；矩陣見
+`.superpowers/sdd/2026-08-09-runaway-process-guard/task-8b-report.md`）。
 
 ---
 
@@ -1105,8 +1112,11 @@ git commit -m "feat(statusline): 進入點注入失控行程守衛 + bump 1.5.0"
 | runaway | `⚠ runaway:N` + 最多 2 筆 `名稱(PID) X.XXc`，超出以 `+M` 表示（全紅） | 僅在偵測到持續失控的行程時出現；否則整行為 `''`，由 `buildOutput` 的 filter 略過 |
 
 判定：`速率(核) = (本次累計CPU秒 − 上次累計CPU秒) ÷ 間隔秒`；同一 PID 連續 5 次 ≥ 0.5 核才標記（間隔 60 秒，即持續 5 分鐘）。
-取樣來源 `powershell -NoProfile -NonInteractive -Command "… Get-Process …"`（實測 266–307ms；原定的 `tasklist /v /fo csv` 需 29–30 秒而恆逾時），狀態存於 `~/.claude/leon-statusline/runaway-state.json`（跨 session 共用、原子寫入）。
+取樣來源 `powershell -NoProfile -NonInteractive -Command "… Get-Process …"`，狀態存於 `~/.claude/leon-statusline/runaway-state.json`（跨 session 共用、原子寫入）。
+（原設計用 `tasklist /v /fo csv`，在開發機上量到的耗時是**數十秒量級**、恆超過取樣逾時；`Get-Process` 是**數百毫秒量級**。確切數字與機器和行程數有關，見 spec §5.1 的實測表。）
 只警告，絕不終止或改優先權。非 Windows 不顯示此行。
+
+**已知限制**：狀態列以一般權限執行，查詢不到完整性等級更高的行程 —— **以系統管理員身分啟動的失控行程偵測不到，且不會有任何跡象**。一般的 `node` / tsserver 是使用者權限，讀得到。詳見 spec §5.1「已知限制」。
 ```
 
 - [ ] **Step 2: `development-journal.md` 版本沿革加列**
@@ -1131,7 +1141,7 @@ git commit -m "feat(statusline): 進入點注入失控行程守衛 + bump 1.5.0"
 - 觸發點在設定層：`typescript-language-server` v5.3.0 `cli.mjs:19105` 僅在 `initializationOptions.disableAutomaticTypingAcquisition` 為真、或 kind 為 `syntax`/`diagnostics` 時才加旗標；win-lsp 未設 → partialSemantic 那隻有、全語意那隻沒有。
 - A/B 實驗（`tools/ata-storm.mjs`，120 秒窗、家目錄 churn 8 檔/30 秒）：A 組（現況）<A> 秒 CPU；B 組（帶旗標）<B> 秒 CPU。判準 B ≤ A×0.2 且 B 速率 < 0.1 核。
 - 修法：win-lsp typescript 加 `initializationOptions.disableAutomaticTypingAcquisition`；刪除家目錄殘留的空 `node_modules`。
-- 守衛：`procscan.mjs`（PowerShell `Get-Process` 取樣；原設計的 `tasklist /v /fo csv` 實測需 29–30 秒、恆超過 3 秒逾時，導致偵測器整合後從未成功取樣過，狀態檔 `procs` 恆為 `{}`，故於 Task 8b 更換）＋ `runaway.mjs`（`classify` 純判定 / `detect` 編排）＋ `cache.mjs` 跨 session 原子狀態檔 ＋ `renderLine5`。判定用區間速率而非瞬時值或生涯平均 —— 生涯平均會把「先閒置後失控」稀釋掉（實測 tsserver 35132 生涯僅 0.25 核但當下 1.0 核）；瞬時值則無法區分刻意的高載實驗。短命 spinner 因 PID 每輪更換而結構性排除，無須白名單。
+- 守衛：`procscan.mjs`（PowerShell `Get-Process` 取樣。原設計的 `tasklist /v /fo csv` 在開發機（Windows 11 Home 10.0.26200，337–359 個行程）實測需 29–30 秒、恆超過 3 秒逾時，導致偵測器整合後從未成功取樣過、狀態檔 `procs` 恆為 `{}`，故於 Task 8b 更換為同機實測 266–307ms 的 `Get-Process`。兩者皆為單機量測，未跨機器驗證）＋ `runaway.mjs`（`classify` 純判定 / `detect` 編排）＋ `cache.mjs` 跨 session 原子狀態檔 ＋ `renderLine5`。判定用區間速率而非瞬時值或生涯平均 —— 生涯平均會把「先閒置後失控」稀釋掉（實測 tsserver 35132 生涯僅 0.25 核但當下 1.0 核）；瞬時值則無法區分刻意的高載實驗。短命 spinner 因 PID 每輪更換而結構性排除，無須白名單。
 ```
 
 - [ ] **Step 4: `pitfalls.md` 新增第 12 條**

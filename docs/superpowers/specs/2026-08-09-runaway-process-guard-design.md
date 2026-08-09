@@ -263,23 +263,47 @@ spinner 是**結構性**被排除的 —— 每輪回收重生、PID 皆不同�
 
 ```
 powershell -NoProfile -NonInteractive -Command
-  "$ci=[Globalization.CultureInfo]::InvariantCulture; Get-Process | ForEach-Object {
+  "try { [Console]::OutputEncoding=[Text.Encoding]::UTF8 } catch {};
+   $ci=[Globalization.CultureInfo]::InvariantCulture; Get-Process | ForEach-Object {
    if ($null -ne $_.CPU) { $_.Id.ToString($ci) + ' ' + $_.CPU.ToString($ci) + ' ' + $_.ProcessName } }"
 ```
 
-輸出每列 `<pid> <cpu秒> <行程名>`。四個設計要點各有依據：
+輸出每列 `<pid> <cpu秒> <行程名>`。五個設計要點各有依據：
 
 - **`-NoProfile -NonInteractive`**：不載入使用者 profile（慢且不可預期），也不等互動輸入。
 - **`ProcessName` 放最後一欄**：本機實測存在 `Docker Desktop` 這種**含空白**的 `ProcessName`（同名 5 個行程）。`pid` 與 CPU 兩欄結構上不含空白，故解析器只切前兩個空白、其餘全歸行程名即安全。
 - **小數點明確指定 `InvariantCulture`**：`$_.CPU` 直接字串串接會跟隨執行緒地區設定。實測同一個 `3.28125` 在 `de-DE` 下為 `3,28125` —— 逗號小數點會讓 `Number()` 剖析失敗。
-- **`$_.CPU` 為 `$null` 的列整列不輸出**：受保護的系統行程讀不到 CPU（實測 355 個行程中有 116 個如此，`Get-Process` 全量 355 → 有 CPU 者 239）。**絕不補 0** —— 補 0 會讓那些行程的區間速率恆為 0，永遠不可能被偵測到，是靜默失效。我們要抓的 `node` 是使用者自己的行程，讀得到。
+- **`$_.CPU` 為 `$null` 的列整列不輸出**（詳見下方「已知限制」）。**絕不補 0** —— 補 0 會讓那些行程的區間速率恆為 0，永遠不可能被偵測到，是靜默失效。
+- **`[Console]::OutputEncoding` 設為 UTF-8**：Windows PowerShell 重導向輸出時預設用 OEM codepage，Node 這端以 `utf8` 解碼，非 ASCII 的行程名會壞掉。實測（`execFileSync` + piped stdout，2026-08-09，本機 zh-CN）：名為 `測試行程守衛` 的探測行程被讀成 `"?yԇ?г????l"` —— 是 GBK 位元組被當 UTF-8 解讀的**混合**結果（夾雜 `U+0079 'y'`、`U+0433 'г'` 這類實際字元），**不是**單純的 `U+FFFD`；設定之後同一個行程正確讀回 `測試行程守衛`。
+  - setter 本身在**這個呼叫路徑**實測**不會拋錯**（裸寫、包 `try/catch` 兩種寫法各跑一次皆正常）。仍包 `try/catch` 的理由是成本為零，且萬一在別的 stdout handle 下拋了，應該只退化成亂碼、而非讓整次取樣失敗。
+  - 此項**只影響顯示，不影響剖析**：GBK 的前導與後續位元組都不等於 `0x20`，故亂碼不會多切出欄位。實測同一個探測行程在兩種情況下欄位數都是 3、`pid` 與 CPU 兩欄都照常剖析得出。
 
 **對使用者可見的變化**：`Get-Process` 的 `ProcessName` **不帶副檔名**（是 `node`，不是 `node.exe`）。程式碼照原樣使用、不自行把副檔名接回去（那是捏造資料），故第 5 行會顯示 `node(31832) 0.86c` 而非 `node.exe(31832) 0.86c`。
+
+#### 已知限制：查詢不到的行程一律偵測不到
+
+`$_.CPU` 為 `$null` 的行程被整列略過，也就是**完全不在偵測範圍內**。機制不是「這些行程比較特別」，而是**狀態列自己的權杖無法查詢該行程** —— 取樣行程未提權（實測 `IsInRole(Administrator) = False`），對完整性等級高於自己的行程拿不到查詢權限。
+
+本機實測（2026-08-09，兩次取樣間行程數會浮動）：
+
+| 取樣 | 全部行程 | CPU 讀得到 | CPU 為 `$null` |
+|---|---|---|---|
+| 第一次 | 355 | 239 | 116 |
+| 第二次 | 337 | 224 | 113 |
+
+讀不到的那批依 session 分布（第二次取樣）：**Session 0（服務／系統）106 個**，**使用者自己的互動 session 7 個**（`csrss` / `winlogon` / `dwm` / `fontdrvhost` / `nvcontainer` / `NVDisplay.Container` / `parsecd`）。同一次取樣中，CIM 的 `GetOwner` 對這 113 個**同樣**全部失敗，與 CPU 讀不到完全重合 —— 佐證是權杖層級的存取問題，不是 `Get-Process` 的欄位問題。
+
+最直接的證據是同名雙實例：`nvcontainer`（pid 12484 vs 12652）與 `parsecd`（pid 29132 vs 29504）**各有兩個實例同在使用者的 session 1**，其中一個 CPU 讀得到、另一個讀不到。同一支程式、同一個使用者、同一個 session，差別只在完整性等級 —— 排除了「那是系統服務」這個解釋。
+
+> **⚠ 對使用者的實質意義：以系統管理員身分啟動的失控行程，這個守衛偵測不到，且不會有任何跡象。**
+> 狀態列不會警告，也不會顯示「有 N 個行程無法檢視」。**適用範圍**：本機、取樣行程未提權時。
+> 一般情況下要抓的 `node`（tsserver、Claude Code 自己起的子行程）是使用者以一般權限啟動的，讀得到 —— 端對端實測 `procs` 內確實有 `node`。
+> 若要涵蓋提權行程，唯一做法是讓狀態列自己提權，那與「狀態列只是個顯示程式」的定位衝突，**不做**（見 §9）。
 
 - 非 Windows（`platform !== 'win32'`）→ 回傳 `null`，且**完全不執行任何命令**。
 - 逾時上限 3 秒（對實測 266–307ms 約 10 倍餘裕）；失敗、逾時、解析錯誤一律回 `null`（不拋）。
 - **可測性**：比照本 repo 的 DI 慣例，簽章為 `sampleProcesses({ exec, platform } = {})`，預設值取自真實環境；測試一律注入 `exec`，**不真的執行 PowerShell**。解析器為模組私有（不再有第二個 export）—— 舊的 `parseTasklistCsv` 已隨本次修訂刪除，不留「以防萬一」的死碼。
-- 命令本身的性質（`-NoProfile` / `-NonInteractive` / invariant / 略過 `$null` CPU / 不補副檔名）全在注入的 `exec` 之外，行為測試鎖不住，改由 `tests/procscan.test.mjs` 的**原始碼靜態鎖**釘住（見 §7）。
+- 命令本身的性質（`-NoProfile` / `-NonInteractive` / invariant / 略過 `$null` CPU / 不補副檔名 / UTF-8 輸出），**以及 `execFileSync` 的選項物件**（`timeout: 3000` / `encoding: 'utf8'` / `windowsHide` / `maxBuffer` / 執行檔名），全在注入的 `exec` 之外，行為測試鎖不住，改由 `tests/procscan.test.mjs` 的**原始碼靜態鎖**釘住（見 §7）。其中 `timeout` 與 `encoding` 的爆炸半徑最大：前者是唯一擋住「同步阻塞取樣拖垮每一次 render」的東西（即 `tasklist` 造成的災難本身），後者一掉就拿到 `Buffer` → 解析器回 `null` → **永久靜默失效**。
 
 ### 5.2 `src/runaway.mjs`（純函式，不碰 fs / 不 spawn）
 
@@ -354,7 +378,9 @@ export function classify(prev, sample, now, cfg = {}) { /* … */ }
 
 - 解析：正常輸出；行程名含空白（`Docker Desktop`）完整保留；CPU 為浮點秒數（含 `0`）；CPU 欄非數字（含逗號小數點 `3,28125`、`N/A`）該列被略過**而非當成 0**；缺欄位／pid 非數字／行程名為空該列被略過；CRLF 與 LF 等價。
 - 平台與失敗：非 Windows 回 `null` 且 `exec` 呼叫次數為 0（**用計數器，不用「被呼叫就 throw」的哨兵** —— `sampleProcesses` 對 `run()` 包了 `try/catch`，哨兵拋的錯會被吞掉而假綠）；`exec` 拋錯回 `null` 不往外拋；輸出無法解析／空輸出／`Buffer`（忘了 `encoding: 'utf8'`）皆回 `null`。
-- **原始碼靜態鎖**（讀 `src/procscan.mjs` 內文）：必須有 `-NoProfile`、`-NonInteractive`、`-Command`；不得出現 `.ps1`；必須有 `InvariantCulture` 與 `CPU.ToString($ci)`；必須有 `$null -ne $_.CPU`；不得出現 `'.exe'` 字面量；不得含任何終止行程的手段。
+- **原始碼靜態鎖**（讀 `src/procscan.mjs` 內文）共 9 條，分兩層：
+  - *命令字串*：必須有 `-NoProfile`、`-NonInteractive`、`-Command`；不得出現 `.ps1`；必須有 `InvariantCulture` 與 `CPU.ToString($ci)`；必須有 `$null -ne $_.CPU`；必須有包在 `try/catch` 裡的 `[Console]::OutputEncoding=[Text.Encoding]::UTF8`；不得出現 `'.exe'` 字面量；不得含任何終止行程的手段。
+  - *`execFileSync` 選項物件*：必須有 `timeout: 3000`、`encoding: 'utf8'`、`windowsHide: true`、`maxBuffer: 8 * 1024 * 1024`，且執行檔為 `'powershell'`。**這層先前是缺的** —— 實地突變確認，把這五項任一改掉（刪 `timeout`、刪 `encoding`、換成不存在的執行檔、`maxBuffer` 改成 16 bytes、刪 `windowsHide`）當時 167 條測試**全綠**。補上後五項各自轉紅。
 - **跨模組欄位契約**（沿用原有那條，改成新格式）：用注入 `exec` 的真實 `sampleProcesses` 餵真實 `classify`，驗端到端能標出持續失控的行程。這是唯一擋得住「上游欄位改名導致功能無聲死亡」的哨兵，不得刪。
 
 **`tests/render.test.mjs`（補）**：`deps.runaway()` 回 `[]`／`null` → 第 5 行為 `''` 且總行數維持 4；回 1 筆 → 出現 `⚠ runaway:1`；回 3 筆 → 只列 2 筆並帶 `+1`。既有「永不隱藏」回歸測試須保持綠。
@@ -380,6 +406,7 @@ export function classify(prev, sample, now, cfg = {}) { /* … */ }
 
 - **不自動終止、不調整優先權、不隔離**任何行程 —— 只警告。誤殺不可逆，且今日的 `sat.sh` 實驗正是會被誤殺的反例。
 - **不支援 Windows 以外平台**：`sampleProcesses()` 於非 Windows 回 `null`，第 5 行不顯示。跨平台承諾不破壞（行為與現況相同），但該平台無此保護。
+- **不為了看見提權行程而讓狀態列提權**：§5.1「已知限制」記錄了取樣行程查詢不到的行程（本機實測 337 個中 113 個，含使用者 session 內 7 個提權行程）一律偵測不到。要涵蓋它們就得讓狀態列本身以系統管理員執行 —— 那會讓一個每 10 秒跑一次的顯示程式長期持有高權限，風險遠大於收益。**選擇讓限制被記錄下來，而不是消除它。**
 - **不做白名單／程式名例外** —— §4.3 已證明結構性排除即足夠。
 - 不記錄歷史、不畫趨勢、不推播通知。
 - 不偵測記憶體洩漏或控制代碼洩漏，只看 CPU。
