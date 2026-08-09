@@ -1,3 +1,5 @@
+import { execFileSync } from 'node:child_process'
+
 // tasklist /v /fo csv 共 9 欄，只取 Image Name(0) / PID(1) / CPU Time(7)
 const CPU_RE = /^(\d+):([0-5]\d):([0-5]\d)$/
 
@@ -21,4 +23,18 @@ export function parseTasklistCsv(text) {
     })
   }
   return rows.length ? rows : null
+}
+
+// 唯一與系統互動處。非 Windows 或任何失敗一律回 null（不 throw）
+export function sampleProcesses({ exec, platform = process.platform } = {}) {
+  if (platform !== 'win32') return null
+  // encoding 必須是 utf8：拿到 Buffer 會讓 parseTasklistCsv 靜默回 null
+  const run = exec || (() => execFileSync('tasklist', ['/v', '/fo', 'csv'], {
+    encoding: 'utf8', timeout: 3000, windowsHide: true, maxBuffer: 8 * 1024 * 1024,
+  }))
+  try {
+    return parseTasklistCsv(run())
+  } catch {
+    return null
+  }
 }
