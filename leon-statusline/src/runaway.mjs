@@ -15,7 +15,8 @@ export function classify(prev, sample, now, cfg = {}) {
   const opts = cfg && typeof cfg === 'object' ? cfg : {}
   const rateThreshold = Number.isFinite(opts.rateThreshold) ? opts.rateThreshold : RATE_THRESHOLD
   const required = Number.isFinite(opts.required) ? opts.required : CONSECUTIVE_REQUIRED
-  const keep = prev || null                  // 無法判定時原樣保留舊狀態
+  // 無法判定時原樣保留舊狀態；但只保留物件，畸形的舊狀態一律歸零免得被呼叫端寫回磁碟
+  const keep = prev && typeof prev === 'object' ? prev : null
 
   if (!Array.isArray(sample)) return { flagged: [], nextState: keep }
   const rows = sample.filter(valid)
@@ -44,4 +45,26 @@ export function classify(prev, sample, now, cfg = {}) {
     if (streak >= required) flagged.push({ pid: p.pid, name: p.name, rate })
   }
   return { flagged, nextState: { t: now, procs } }
+}
+
+// 編排：節流 → 取樣 → 判定 → 持久化。所有 I/O（含時鐘）由外部注入，故可完全測試
+// 只負責產出警告用的清單，永不對行程做任何處置
+export function detect({ now, readState, writeState, sample, cfg } = {}) {
+  const opts = cfg && typeof cfg === 'object' ? cfg : {}   // cfg 僅為測試接縫，不接任何使用者設定
+  const interval = Number.isFinite(opts.intervalMs) ? opts.intervalMs : SCAN_INTERVAL_MS
+  let state = null
+  try { state = readState() } catch { state = null }
+  const cached = state && Array.isArray(state.flagged) ? state.flagged : []
+
+  // 早退必須在 sample() 之前：取樣是同步阻塞的外部命令，且 classify 對極短 dt 無下限
+  if (state && Number.isFinite(state.t) && (now - state.t) < interval) return cached
+
+  let s = null
+  try { s = sample() } catch { s = null }
+  if (!s) return cached                      // 取樣失敗：沿用上次結果，不更新狀態
+
+  const { flagged, nextState } = classify(state, s, now, opts)
+  // 只寫回物件；classify 已擋掉畸形舊狀態，這裡再擋一層免得展開字串寫出垃圾
+  if (nextState && typeof nextState === 'object') { try { writeState({ ...nextState, flagged }) } catch {} }
+  return flagged
 }
