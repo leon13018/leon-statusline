@@ -17,6 +17,7 @@ import { writeFileSync, readFileSync, readdirSync, rmSync, mkdirSync } from 'nod
 import { homedir } from 'node:os'
 import { basename, join } from 'node:path'
 import { pathToFileURL } from 'node:url'
+import { createFrameReader } from './lsp-frames.mjs'
 
 const MODE = process.argv[2]
 if (MODE !== 'on' && MODE !== 'off') {
@@ -79,7 +80,12 @@ foreach ($id in $set) {
 Write-Output ("{0}|{1}" -f $cpu, ($live -join ','))
 `
 
-// churn 目錄必須在家目錄下，才會命中 failed-lookup 監看
+// churn 目錄設在家目錄下，用意是命中 failed-lookup 監看。
+// ⚠️ 但這條因果在本 probe 上**量不到**：收尾窗（停掉 didChange、只留 churn）實測僅
+// 0.003 / 0.001 核，與閒置無異。這不代表 churn 在 production 無效 —— spec §1 診斷抓到的
+// FSWatcher._handle.onchange → scheduleInvalidateResolutionOfFailedLookupLocation
+// 是真實檔案系統事件觸發的；合理解釋是本目錄未落在 production 實際被監看的失敗查找位置上。
+// churn 在 production 的貢獻度，本實驗未能量到，亦未否證。措辭與 spec §3.2 一致。
 const churn = join(homedir(), '.claude', '.ata-probe')
 mkdirSync(churn, { recursive: true })
 
@@ -105,28 +111,15 @@ try {
 
   // 解析 server → client 訊息：統計 publishDiagnostics，並回覆 server 發來的請求（避免它卡住）
   const diagFiles = new Set()
-  let diagNotifications = 0, buf = ''
-  lsp.stdout.on('data', d => {
-    buf += d.toString('utf8')
-    for (;;) {
-      const idx = buf.indexOf('Content-Length:')
-      if (idx === -1) { buf = ''; break }
-      const hEnd = buf.indexOf('\r\n\r\n', idx)
-      if (hEnd === -1) break
-      const len = Number(buf.slice(idx + 15, hEnd).trim())
-      if (buf.length < hEnd + 4 + len) break
-      const body = buf.slice(hEnd + 4, hEnd + 4 + len)
-      buf = buf.slice(hEnd + 4 + len)
-      let m
-      try { m = JSON.parse(body) } catch { continue }
-      if (m.method === 'textDocument/publishDiagnostics') {
-        diagNotifications++
-        diagFiles.add(basename(decodeURIComponent(new URL(m.params.uri).pathname)))
-      } else if (m.method && m.id !== undefined) {
-        send({ jsonrpc: '2.0', id: m.id, result: null })   // 泛用回覆，避免 server 等待
-      }
+  let diagNotifications = 0
+  lsp.stdout.on('data', createFrameReader(m => {
+    if (m.method === 'textDocument/publishDiagnostics') {
+      diagNotifications++
+      diagFiles.add(basename(decodeURIComponent(new URL(m.params.uri).pathname)))
+    } else if (m.method && m.id !== undefined) {
+      send({ jsonrpc: '2.0', id: m.id, result: null })   // 泛用回覆，避免 server 等待
     }
-  })
+  }))
 
   send({
     jsonrpc: '2.0', id: 1, method: 'initialize',

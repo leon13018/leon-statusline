@@ -130,7 +130,17 @@ B 組 180 秒窗內累積 CPU **≤ A 組的 20%**，且 B 組平均速率 **< 0
 **2. 仍予套用的理由（使用者裁決）**
 
 - **旗標生效有硬證據**：B 組行程樹只有 tsserver 一隻，**`typingsInstaller.js` 子行程完全沒有被生成**（A 組有）。這不是「設定沒吃到」。
-- **功能損失為零**：受影響的 9 個專案皆無 `package.json`、無 `node_modules`，本來就不可能有 `@types/*` 可自動安裝；停用 ATA 對它們不減少任何能力。
+- **功能損失趨近於零（非嚴格為零，實測後修正）**：9 個受影響專案**根目錄**皆無 `package.json`、
+  無 `tsconfig`/`jsconfig`、無 `node_modules`（已逐一實測），故根層級本來就沒有依賴宣告可供 ATA 解析，
+  也無既有 `@types/*` 可用。
+  但**其中 7 個在深層子目錄存在 `package.json`**，多屬前端資產或子模組目錄，例如
+  `myProgram/src/WarehouseLabelCheck.Web/wwwroot/package.json`（4 個 wlc-* 專案）、
+  `graph-ui/package.json`、`leon-statusline/package.json`，以及 `alexnet` 的 19 個
+  —— 後者全部位於 `.venv/Lib/site-packages/jupyterlab/…`，屬 Python 虛擬環境內的第三方資產。
+  **因此「9 個專案皆無 `package.json`」是錯的絕對句，不可再使用。**
+  精確的說法是：**這些深層 `package.json` 都不在實際被編輯的 `.mjs` 的祖先鏈上**，
+  且 9 個專案全數無 `node_modules`，故停用 ATA 在當前使用形態下不減少任何能力；
+  **殘留的例外**是日後若直接在那些深層目錄內編輯 JS，將失去該處的 `@types/*` 自動安裝。
 - **仍省兩成**：22.7% 是真實可測的改善。
 - **風險低且可逆**：單行設定，已備份為 `plugin.json.bak-2026-08-09`，還原成本近乎零。
 
