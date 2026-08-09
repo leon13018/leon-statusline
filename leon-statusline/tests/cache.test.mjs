@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest'
-import { mkdtempSync, rmSync, writeFileSync, readdirSync } from 'node:fs'
+import { mkdtempSync, rmSync, writeFileSync, readdirSync, mkdirSync, readFileSync } from 'node:fs'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { withCache, readSharedState, writeSharedState } from '../src/cache.mjs'
@@ -45,5 +45,22 @@ describe('shared state', () => {
   it('不留下暫存檔', () => {
     writeSharedState('runaway-state', { t: 1 }, dir)
     expect(readdirSync(dir).filter(f => f.endsWith('.tmp'))).toEqual([])
+  })
+  it('覆寫既有檔：讀回最新值且不留暫存檔', () => {
+    writeSharedState('s', { t: 1 }, dir)
+    writeSharedState('s', { t: 2 }, dir)
+    expect(readSharedState('s', dir)).toEqual({ t: 2 })
+    expect(readdirSync(dir)).toEqual(['s.json'])
+  })
+  it('name 不得跳出目錄（路徑穿越）', () => {
+    const inner = join(dir, 'inner')
+    mkdirSync(inner)
+    writeFileSync(join(dir, 'victim.json'), '{"original":true}')
+    // 讀：不得讀到 inner 之外的檔（須在下面那筆寫入之前斷言，否則會讀到 inner 內同名的清洗後檔案）
+    expect(readSharedState('../victim', inner)).toBe(null)
+    // 寫：不得覆寫 inner 之外的檔
+    writeSharedState('../victim', { PWNED: true }, inner)
+    expect(JSON.parse(readFileSync(join(dir, 'victim.json'), 'utf8'))).toEqual({ original: true })
+    expect(readdirSync(dir).sort()).toEqual(['inner', 'victim.json'])
   })
 })

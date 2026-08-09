@@ -27,14 +27,16 @@ export function withCache(sessionId, key, ttlMs, fn, now = Date.now(), dir = cac
 
 // 跨 session 共用狀態（非 per-session）：失控偵測是全機層級，每 session 各存一份會重複掃描且反覆暖機
 export function readSharedState(name, dir = cacheDir()) {
-  try { return JSON.parse(readFileSync(join(dir, `${name}.json`), 'utf8')) } catch { return null }
+  try { return JSON.parse(readFileSync(join(dir, `${sanitize(name)}.json`), 'utf8')) } catch { return null }
 }
 
 // 先寫暫存再 rename，保證原子性；多 session 併發時最後一個勝出，內容仍完整
 export function writeSharedState(name, obj, dir = cacheDir()) {
-  const file = join(dir, `${name}.json`)
-  const tmp = `${file}.${process.pid}.tmp`
+  // tmp 必須在 try 外宣告，catch 才看得到；路徑組出前失敗時它是 undefined，unlinkSync 由內層 catch 吞掉
+  let tmp
   try {
+    const file = join(dir, `${sanitize(name)}.json`)
+    tmp = `${file}.${process.pid}.tmp`
     writeFileSync(tmp, JSON.stringify(obj))
     renameSync(tmp, file)
   } catch {
