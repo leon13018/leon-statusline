@@ -226,7 +226,58 @@ describe('detect 的節流與防呆', () => {
     })
     expect(out).toEqual([])
   })
-  it('節流預設用 SCAN_INTERVAL_MS，不接受外部設定管道', () => {
+  it('now 非有限數（時鐘壞掉）→ 不取樣、不寫入，回快取的 flagged', () => {
+    // 若讓它往下走：classify 判不出來 → 寫回原樣的 t → 節流永久失效，每次 render 都同步取樣一次
+    // 註：哨兵不能用 throw（會被 detect 的 try 吞掉而假綠），必須數呼叫次數
+    for (const now of [NaN, undefined, Infinity, -Infinity]) {
+      let sampled = 0, written = 0
+      const out = detect({
+        now,
+        readState: () => ({ t: 1000, procs: { 1: { name: 'a.exe', cpu: 0, streak: 4 } }, flagged: flaggedOne }),
+        writeState: () => { written += 1 },
+        sample: () => { sampled += 1; return [{ pid: 1, name: 'a.exe', cpuSeconds: 60 }] },
+      })
+      expect({ now, out, sampled, written }).toEqual({ now, out: flaggedOne, sampled: 0, written: 0 })
+    }
+  })
+  it('now 非有限數時連跑三輪 → 狀態不被洗掉，具自癒能力', () => {
+    let disk = { t: 1000, procs: { 1: { name: 'a.exe', cpu: 0, streak: 4 } }, flagged: flaggedOne }
+    let sampled = 0
+    const run = now => detect({
+      now,
+      readState: () => disk,
+      writeState: s => { disk = s },
+      sample: () => { sampled += 1; return [{ pid: 1, name: 'a.exe', cpuSeconds: 60 }] },
+    })
+    for (let i = 0; i < 3; i += 1) expect(run(NaN)).toEqual(flaggedOne)
+    expect(sampled).toBe(0)
+    expect(disk.t).toBe(1000)                 // 時鐘恢復後，仍以原基準續判
+    expect(run(1000 + SCAN_INTERVAL_MS)).toEqual(flaggedOne)
+    expect(sampled).toBe(1)
+  })
+  it('狀態是陣列 → 不寫出 {"0":..} 這種垃圾狀態', () => {
+    // typeof [] === 'object'，光靠 typeof 守衛擋不住；判不出來就整個不寫才擋得住
+    let written = 'NOT_CALLED'
+    const out = detect({
+      now: 2, readState: () => ['垃', '圾'],
+      writeState: s => { written = s },
+      sample: () => [],
+    })
+    expect(out).toEqual([])
+    expect(written).toBe('NOT_CALLED')
+  })
+  it('sample 回傳非陣列的垃圾 → 不寫入（避免 t 不前進導致節流失效）', () => {
+    let written = 'NOT_CALLED'
+    const out = detect({
+      now: SCAN_INTERVAL_MS,
+      readState: () => ({ t: 0, procs: { 1: { name: 'a.exe', cpu: 0, streak: 4 } }, flagged: flaggedOne }),
+      writeState: s => { written = s },
+      sample: () => ({ bad: 1 }),
+    })
+    expect(out).toEqual([])
+    expect(written).toBe('NOT_CALLED')
+  })
+  it('節流預設以 SCAN_INTERVAL_MS 為界，邊界兩側各釘一次', () => {
     let calls = 0
     const run = now => detect({
       now,

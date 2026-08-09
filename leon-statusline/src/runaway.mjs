@@ -57,6 +57,7 @@ export function detect({ now, readState, writeState, sample, cfg } = {}) {
   const cached = state && Array.isArray(state.flagged) ? state.flagged : []
 
   // 早退必須在 sample() 之前：取樣是同步阻塞的外部命令，且 classify 對極短 dt 無下限
+  if (!Number.isFinite(now)) return cached   // 時鐘壞掉：不取樣也不寫入，否則節流會永久失效
   if (state && Number.isFinite(state.t) && (now - state.t) < interval) return cached
 
   let s = null
@@ -64,7 +65,7 @@ export function detect({ now, readState, writeState, sample, cfg } = {}) {
   if (!s) return cached                      // 取樣失敗：沿用上次結果，不更新狀態
 
   const { flagged, nextState } = classify(state, s, now, opts)
-  // 只寫回物件；classify 已擋掉畸形舊狀態，這裡再擋一層免得展開字串寫出垃圾
-  if (nextState && typeof nextState === 'object') { try { writeState({ ...nextState, flagged }) } catch {} }
+  // classify 判不出來時會原樣回吐 state；此時不得寫入，否則 t 不前進＝節流失效、flagged 被洗掉
+  if (nextState && nextState !== state) { try { writeState({ ...nextState, flagged }) } catch {} }
   return flagged
 }
