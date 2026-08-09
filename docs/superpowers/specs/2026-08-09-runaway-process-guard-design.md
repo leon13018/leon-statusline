@@ -240,12 +240,46 @@ spinner 是**結構性**被排除的 —— 每輪回收重生、PID 皆不同�
 
 ### 5.1 `src/procscan.mjs`（副作用層，薄）
 
-唯一與系統互動處。`sampleProcesses()` 執行 `tasklist /v /fo csv`，解析為
+唯一與系統互動處。`sampleProcesses()` 執行 PowerShell 的 `Get-Process`，解析為
 `[{ pid: number, name: string, cpuSeconds: number }]`。
 
-- 非 Windows（`platform !== 'win32'`）→ 回傳 `null`。
-- 逾時上限 3 秒；失敗、逾時、解析錯誤一律回 `null`（不拋）。
-- **可測性**：比照本 repo 的 DI 慣例，簽章為 `sampleProcesses({ exec, platform } = {})`，預設值取自真實環境。純解析邏輯另拆為 export 的 `parseTasklistCsv(text)`，使 CSV 解析與平台分支能在 Windows 上直接測試，無須真的執行 `tasklist`。
+> **本節於 2026-08-09 整合階段修訂。原設計取樣來源為 `tasklist /v /fo csv`，實測不可行。**
+>
+> 在本機（Windows 11 Home 10.0.26200，取樣當下 347–359 個行程）實測四種來源：
+>
+> | 方式 | 實測耗時 | 結論 |
+> |---|---|---|
+> | `tasklist /v /fo csv` | 30303ms / 29072ms | 恆超過 `procscan` 的 3000ms 逾時 |
+> | `tasklist /fo csv` | 602ms | 快，但**輸出無 CPU Time 欄**，對本功能無用 |
+> | `wmic process get …` | — | Windows 11 已移除該工具，不存在 |
+> | `powershell … Get-Process` | 266–307ms（4 次量測） | 直接給 pid / ProcessName / CPU 秒數（浮點） |
+>
+> 後果是**偵測器自接上進入點起從未成功取樣過**：`sampleProcesses()` 每次都因逾時回 `null`，
+> 狀態檔 `~/.claude/leon-statusline/runaway-state.json` 的 `procs` 恆為 `{}`（修訂前實地取樣所得）。
+> 使用者已裁決改用 `Get-Process`，代價是本節與解析器、其測試全部重寫。
+> 改用後同一狀態檔的 `procs` 有 239 筆（2026-08-09 端對端實測）。
+
+實際命令（單行 `-Command`，**不使用外部 `.ps1` 腳本檔** —— 那會多一個必須隨 plugin 發佈的檔案）：
+
+```
+powershell -NoProfile -NonInteractive -Command
+  "$ci=[Globalization.CultureInfo]::InvariantCulture; Get-Process | ForEach-Object {
+   if ($null -ne $_.CPU) { $_.Id.ToString($ci) + ' ' + $_.CPU.ToString($ci) + ' ' + $_.ProcessName } }"
+```
+
+輸出每列 `<pid> <cpu秒> <行程名>`。四個設計要點各有依據：
+
+- **`-NoProfile -NonInteractive`**：不載入使用者 profile（慢且不可預期），也不等互動輸入。
+- **`ProcessName` 放最後一欄**：本機實測存在 `Docker Desktop` 這種**含空白**的 `ProcessName`（同名 5 個行程）。`pid` 與 CPU 兩欄結構上不含空白，故解析器只切前兩個空白、其餘全歸行程名即安全。
+- **小數點明確指定 `InvariantCulture`**：`$_.CPU` 直接字串串接會跟隨執行緒地區設定。實測同一個 `3.28125` 在 `de-DE` 下為 `3,28125` —— 逗號小數點會讓 `Number()` 剖析失敗。
+- **`$_.CPU` 為 `$null` 的列整列不輸出**：受保護的系統行程讀不到 CPU（實測 355 個行程中有 116 個如此，`Get-Process` 全量 355 → 有 CPU 者 239）。**絕不補 0** —— 補 0 會讓那些行程的區間速率恆為 0，永遠不可能被偵測到，是靜默失效。我們要抓的 `node` 是使用者自己的行程，讀得到。
+
+**對使用者可見的變化**：`Get-Process` 的 `ProcessName` **不帶副檔名**（是 `node`，不是 `node.exe`）。程式碼照原樣使用、不自行把副檔名接回去（那是捏造資料），故第 5 行會顯示 `node(31832) 0.86c` 而非 `node.exe(31832) 0.86c`。
+
+- 非 Windows（`platform !== 'win32'`）→ 回傳 `null`，且**完全不執行任何命令**。
+- 逾時上限 3 秒（對實測 266–307ms 約 10 倍餘裕）；失敗、逾時、解析錯誤一律回 `null`（不拋）。
+- **可測性**：比照本 repo 的 DI 慣例，簽章為 `sampleProcesses({ exec, platform } = {})`，預設值取自真實環境；測試一律注入 `exec`，**不真的執行 PowerShell**。解析器為模組私有（不再有第二個 export）—— 舊的 `parseTasklistCsv` 已隨本次修訂刪除，不留「以防萬一」的死碼。
+- 命令本身的性質（`-NoProfile` / `-NonInteractive` / invariant / 略過 `$null` CPU / 不補副檔名）全在注入的 `exec` 之外，行為測試鎖不住，改由 `tests/procscan.test.mjs` 的**原始碼靜態鎖**釘住（見 §7）。
 
 ### 5.2 `src/runaway.mjs`（純函式，不碰 fs / 不 spawn）
 
@@ -274,7 +308,8 @@ export function classify(prev, sample, now, cfg = {}) { /* … */ }
 - 理由：失控是全機層級；若每 session 各存一份，每開新 session 都要重新暖機 5 分鐘且重複掃描。
 - 寫入：先寫暫存檔再 `rename`，保證原子性。多 session 併發時最後一個勝出，內容仍完整。
 - **觸發者**：不另起常駐行程或排程。掃描由 statusline 自身的刷新驅動 —— 每次刷新先讀狀態檔，僅在 `now - state.t >= SCAN_INTERVAL_MS` 時才實際執行一次掃描並更新狀態檔。
-- 節流：未達間隔即直接沿用既有結果，不掃描。故 statusline 每 10 秒刷新中，最多每 6 次才有 1 次付出 `tasklist` 的成本（實測 50–100ms）。
+- 節流：未達間隔即直接沿用既有結果，不掃描。故 statusline 每 10 秒刷新中，最多每 6 次才有 1 次付出取樣成本。端對端實測（2026-08-09，`statusline.mjs` 連跑 4 次）：真的取樣那次 **484ms**，被節流擋下的三次各 **58 / 59 / 60ms**。
+  - 註：`detect` 在取樣**失敗**時亦寫回狀態（只推進 `attemptedAt`），否則節流基準永不前進 —— 見 `leon-statusline/src/runaway.mjs:64-71` 的 `attemptOnly`。取樣**成功**時寫回的狀態刻意不帶 `attemptedAt`（`lastAttempt` 會退回 `t`，而此刻 `t === now`，節流基準相同），端對端實測確認狀態檔成功後確實沒有該欄位。
 
 ### 5.4 `src/render.mjs`：新增 `renderLine5`
 
@@ -293,7 +328,7 @@ export function classify(prev, sample, now, cfg = {}) { /* … */ }
 
 **首要原則：偵測失敗絕不拖累顯示。** statusline 的本職是顯示，偵測是附加功能。
 
-- `tasklist` 失敗／逾時／非 Windows → `sampleProcesses()` 回 `null` → 沿用上次結果，不更新狀態檔，不顯示警告。
+- PowerShell 失敗／逾時／非 Windows → `sampleProcesses()` 回 `null` → 沿用上次的 `flagged`，不顯示新警告；狀態檔僅推進 `attemptedAt`（`t` / `procs` / `flagged` 原樣保留），以免節流基準卡住。
 - 狀態檔毀損或 JSON 解析失敗 → 視同無前次狀態，重建基準。
 - 狀態檔寫入失敗 → 靜默忽略（下次掃描重試）。
 - `classify` 為純函式且對缺值全部回退，不拋例外。
@@ -315,7 +350,12 @@ export function classify(prev, sample, now, cfg = {}) { /* … */ }
 8. `dtSec <= 0` → 原樣回傳，不誤判。
 9. 消失的 PID 不留在 `nextState`。
 
-**`tests/procscan.test.mjs`（新增）**：CSV 解析（含含逗號的行程名、`N/A` 的 CPU 欄）；`hh:mm:ss` 轉秒；非 Windows 回 `null`；壞輸出回 `null` 不拋。
+**`tests/procscan.test.mjs`（新增）**：全部經注入的 `exec` 驗證，不真的執行 PowerShell。
+
+- 解析：正常輸出；行程名含空白（`Docker Desktop`）完整保留；CPU 為浮點秒數（含 `0`）；CPU 欄非數字（含逗號小數點 `3,28125`、`N/A`）該列被略過**而非當成 0**；缺欄位／pid 非數字／行程名為空該列被略過；CRLF 與 LF 等價。
+- 平台與失敗：非 Windows 回 `null` 且 `exec` 呼叫次數為 0（**用計數器，不用「被呼叫就 throw」的哨兵** —— `sampleProcesses` 對 `run()` 包了 `try/catch`，哨兵拋的錯會被吞掉而假綠）；`exec` 拋錯回 `null` 不往外拋；輸出無法解析／空輸出／`Buffer`（忘了 `encoding: 'utf8'`）皆回 `null`。
+- **原始碼靜態鎖**（讀 `src/procscan.mjs` 內文）：必須有 `-NoProfile`、`-NonInteractive`、`-Command`；不得出現 `.ps1`；必須有 `InvariantCulture` 與 `CPU.ToString($ci)`；必須有 `$null -ne $_.CPU`；不得出現 `'.exe'` 字面量；不得含任何終止行程的手段。
+- **跨模組欄位契約**（沿用原有那條，改成新格式）：用注入 `exec` 的真實 `sampleProcesses` 餵真實 `classify`，驗端到端能標出持續失控的行程。這是唯一擋得住「上游欄位改名導致功能無聲死亡」的哨兵，不得刪。
 
 **`tests/render.test.mjs`（補）**：`deps.runaway()` 回 `[]`／`null` → 第 5 行為 `''` 且總行數維持 4；回 1 筆 → 出現 `⚠ runaway:1`；回 3 筆 → 只列 2 筆並帶 `+1`。既有「永不隱藏」回歸測試須保持綠。
 

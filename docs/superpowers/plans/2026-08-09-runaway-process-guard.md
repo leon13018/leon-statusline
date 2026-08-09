@@ -4,9 +4,9 @@
 
 **Goal:** 消除 tsserver 因祖先目錄探測而無限空轉的成因（`win-lsp` 停用自動型別擷取），並在 statusline 新增條件式第 5 行，於任何行程持續失控時主動顯示。
 
-**Architecture:** Part 1 改 `win-lsp` plugin 的 typescript `initializationOptions`，先以獨立 A/B 實驗證實機制有效。Part 2 在 leon-statusline 新增三個小模組：`procscan.mjs`（唯一與系統互動處，`tasklist` 取樣）、`runaway.mjs`（`classify` 純判定 + `detect` 編排，I/O 全注入）、`cache.mjs` 補跨 session 原子狀態檔；`render.mjs` 加 `renderLine5`，無異常時回 `''`，由既有的 `lines.filter(l => l && l.length)` 自動略過。
+**Architecture:** Part 1 改 `win-lsp` plugin 的 typescript `initializationOptions`，先以獨立 A/B 實驗證實機制有效。Part 2 在 leon-statusline 新增三個小模組：`procscan.mjs`（唯一與系統互動處；原設計為 `tasklist` 取樣，Task 8b 起改為 PowerShell `Get-Process` —— 見 Task 2 開頭的實測表）、`runaway.mjs`（`classify` 純判定 + `detect` 編排，I/O 全注入）、`cache.mjs` 補跨 session 原子狀態檔；`render.mjs` 加 `renderLine5`，無異常時回 `''`，由既有的 `lines.filter(l => l && l.length)` 自動略過。
 
-**Tech Stack:** Node ESM（`.mjs`）、Vitest（dev-only）、零執行期依賴、Windows `tasklist`。
+**Tech Stack:** Node ESM（`.mjs`）、Vitest（dev-only）、零執行期依賴、Windows PowerShell `Get-Process`（原定 `tasklist`，實測恆逾時而於 Task 8b 更換）。
 
 ## Global Constraints
 
@@ -196,6 +196,25 @@ win-lsp `plugin.json` 在 repo 之外且非 git 管理，**不進 commit**，僅
 
 ### Task 2: `parseTasklistCsv` — CSV 解析（純函式）
 
+> ## ⛔ 本 Task 已於 2026-08-09 被 **Task 8b 取代**。以下內容為當時實際執行過的原樣記錄，程式碼已不在 repo 中。
+>
+> **取代原因（實測，不是預期）**：整合階段量到本機（Windows 11 Home 10.0.26200，347–359 個行程）
+>
+> | 方式 | 實測耗時 | 結論 |
+> |---|---|---|
+> | `tasklist /v /fo csv` | 30303ms / 29072ms | 恆超過 Task 3 設的 3000ms 逾時 |
+> | `tasklist /fo csv` | 602ms | 快，但**無 CPU Time 欄**，對本功能無用 |
+> | `wmic process get …` | — | Windows 11 已移除該工具 |
+> | `powershell … Get-Process` | 266–307ms（4 次量測） | 直接給 pid / ProcessName / CPU 秒數（浮點） |
+>
+> 也就是說本 Task 與 Task 3 交付的取樣路徑**在真機上從未成功執行過一次** —— 狀態檔的 `procs` 恆為 `{}`。
+> 本 Task 的 `parseTasklistCsv` 與其 5 條測試已**整個刪除**（無呼叫端的死碼是負債，且會讓下一個人
+> 以為 tasklist 仍是可走的路）。新的取樣與解析見 Task 8b 與 spec §5.1。
+>
+> **這裡的 CSV 欄位知識仍然正確**，只是對本功能無用：`tasklist /v /fo csv` 共 9 欄
+> （`Image Name, PID, Session Name, Session#, Mem Usage, Status, User Name, CPU Time, Window Title`），
+> 取索引 0、1、7；CPU Time 為 `H:MM:SS`，時數可超過 99（如 `350:32:46`）。
+
 **Files:**
 - Create: `leon-statusline/src/procscan.mjs`
 - Test: `leon-statusline/tests/procscan.test.mjs`
@@ -203,9 +222,7 @@ win-lsp `plugin.json` 在 repo 之外且非 git 管理，**不進 commit**，僅
 **Interfaces:**
 - Produces: `parseTasklistCsv(text: string): Array<{pid:number, name:string, cpuSeconds:number}> | null` — 解析 `tasklist /v /fo csv`；無有效列回 `null`。
 
-> `tasklist /v /fo csv` 共 9 欄：`Image Name, PID, Session Name, Session#, Mem Usage, Status, User Name, CPU Time, Window Title`。只取索引 0、1、7。CPU Time 格式 `H:MM:SS`，時數可超過 99（如 `350:32:46`）。Window Title 為最後一欄，即使其內含 `","` 也只影響尾端切片，不影響索引 0–7。
-
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**（已執行；此測試已於 Task 8b 刪除）
 
 建立 `leon-statusline/tests/procscan.test.mjs`：
 
@@ -299,15 +316,49 @@ git commit -m "feat(procscan): tasklist CSV 解析（純函式）"
 
 ### Task 3: `sampleProcesses` — 平台分支與執行注入
 
+> ## ⚠ 本 Task 的**取樣命令**已於 2026-08-09 被 **Task 8b 取代**（見 Task 2 開頭的實測表）。
+>
+> 保留下來、未被取代的部分：函式簽章 `sampleProcesses({ exec?, platform? } = {})`、
+> 「非 Windows 回 `null` 且完全不執行命令」、「失敗／逾時／解析失敗一律回 `null` 不 throw」、
+> `execFileSync` 的 `encoding: 'utf8'` / `timeout: 3000` / `windowsHide` / `maxBuffer` 設定，
+> 以及回傳型別 `{pid, name, cpuSeconds}[] | null`。這些在 Task 8b 後完全不變。
+>
+> 被取代的部分：`execFileSync('tasklist', ['/v','/fo','csv'], …)` 改為
+>
+> ```js
+> execFileSync('powershell', ['-NoProfile', '-NonInteractive', '-Command', PS_COMMAND], { … })
+>
+> const PS_COMMAND = [
+>   '$ci=[Globalization.CultureInfo]::InvariantCulture;',
+>   'Get-Process | ForEach-Object {',
+>   'if ($null -ne $_.CPU) {',
+>   "$_.Id.ToString($ci) + ' ' + $_.CPU.ToString($ci) + ' ' + $_.ProcessName",
+>   '} }',
+> ].join(' ')
+> ```
+>
+> 輸出每列 `<pid> <cpu秒> <行程名>`；`parseTasklistCsv` 改為模組私有的 `parseProcessLines`。
+> 四個要點各有實測依據（詳見 spec §5.1）：`-NoProfile -NonInteractive` 不載入 profile；
+> 行程名放最後一欄（本機實測有 `Docker Desktop` 這種含空白的 `ProcessName`）；
+> CPU 用 `InvariantCulture`（裸串接跟隨地區設定，`de-DE` 實測吐 `3,28125`）；
+> `$_.CPU` 為 `$null` 的列整列略過而**不補 0**（實測 355 個行程中 116 個讀不到 CPU；
+> 補 0 會讓它們的區間速率恆為 0 而永不可能被偵測到，是靜默失效）。
+>
+> **對使用者可見的變化**：`ProcessName` 不帶副檔名，第 5 行顯示 `node(31832) 0.86c` 而非 `node.exe(31832) 0.86c`。
+>
+> Task 8b 另補了行為測試鎖不住的**原始碼靜態鎖**（`-NoProfile` / `-NonInteractive` / `-Command` /
+> 不得有 `.ps1` / `InvariantCulture` / `$null -ne $_.CPU` / 不得有 `'.exe'` 字面量），
+> 並保留原有的「procscan → classify 跨模組欄位契約」那條，只把格式換掉。
+
 **Files:**
 - Modify: `leon-statusline/src/procscan.mjs`（新增 export）
 - Test: `leon-statusline/tests/procscan.test.mjs`（新增 describe）
 
 **Interfaces:**
-- Consumes: `parseTasklistCsv`（Task 2）。
+- Consumes: `parseTasklistCsv`（Task 2；Task 8b 後改為私有的 `parseProcessLines`）。
 - Produces: `sampleProcesses({ exec?, platform? } = {}): Array<{pid,name,cpuSeconds}> | null` — 非 Windows、執行失敗、逾時、解析失敗一律回 `null`，不 throw。
 
-- [ ] **Step 1: Write the failing test**
+- [x] **Step 1: Write the failing test**（已執行；下方 CSV 版測試已於 Task 8b 改寫成新格式）
 
 在 `leon-statusline/tests/procscan.test.mjs` 第 2 行 import 加入 `sampleProcesses`：
 
@@ -1003,6 +1054,35 @@ git commit -m "feat(statusline): 進入點注入失控行程守衛 + bump 1.5.0"
 
 ---
 
+### Task 8b: 取樣來源改為 PowerShell `Get-Process`（整合後的設計變更，使用者已裁決）
+
+**Files:**
+- Modify: `leon-statusline/src/procscan.mjs`（取樣命令與解析器全換；刪除 `parseTasklistCsv`）
+- Modify: `leon-statusline/tests/procscan.test.mjs`（5 條 CSV 解析測試刪除；新增新格式測試與原始碼靜態鎖；跨模組契約測試保留改格式）
+- Modify: `leon-statusline/src/runaway.mjs`（僅補註解）／`leon-statusline/tests/runaway.test.mjs`（補 `attemptOnly` 防呆測試）
+- Modify: `leon-statusline/src/render.mjs`（僅更正一段指向 `procscan.mjs` 的過期註解）
+- Modify: 本檔 Task 2 / Task 3 ＋ spec §5.1 / §5.3 / §6 / §7
+
+**為何**：Task 8 接上進入點後才實地量到，Task 2/3 交付的 `tasklist /v /fo csv` 在本機需 **29–30 秒**，
+恆超過 Task 3 設的 3000ms 逾時 —— 偵測器**從未成功取樣過一次**，狀態檔的 `procs` 恆為 `{}`。
+完整實測表見 Task 2 開頭。使用者裁決改用 `Get-Process`（實測 266–307ms），並接受重寫解析器與其測試的代價。
+
+**做了什麼**：見 Task 3 開頭的取代說明與 spec §5.1。要點：命令用 `-NoProfile -NonInteractive -Command`
+單行（不引入 `.ps1` 檔）；輸出 `<pid> <cpu秒> <行程名>`，行程名放最後一欄；CPU 以 `InvariantCulture`
+輸出；`$_.CPU` 為 `$null` 的列整列略過而不補 0。**對使用者可見的變化**：`ProcessName` 不帶副檔名，
+第 5 行顯示 `node(31832)` 而非 `node.exe(31832)`。
+
+**順帶補的承重不變量**：`runaway.mjs` 的 `attemptOnly` 對畸形 `base` 的防呆先前無測試保護
+（把它降級成 `!!base` 時 161 條測試全綠，卻會寫出 `{"t":undefined,"procs":undefined,…}`；
+真機可達：狀態檔損毀 ＋ 取樣失敗）。已補一條表格式測試並以突變確認轉紅。
+
+**驗收（實測，2026-08-09）**：`npx vitest run` → 12 檔 167 測試全綠、exit 0。
+端對端刪掉狀態檔後連跑 `statusline.mjs` 4 次：484 / 58 / 59 / 60ms，皆 exit 0、皆 4 行、無 `.tmp` 殘留；
+狀態檔 13156 bytes、`procs` **239 筆**（修復前恆為 `{}`），`flagged` 為空（無誤報）。
+7 個突變全數轉紅（矩陣見 `.superpowers/sdd/2026-08-09-runaway-process-guard/task-8b-report.md`）。
+
+---
+
 ### Task 9: 文件對齊（attributes / journal / pitfalls / CODE_MAP）
 
 **Files:**
@@ -1025,7 +1105,7 @@ git commit -m "feat(statusline): 進入點注入失控行程守衛 + bump 1.5.0"
 | runaway | `⚠ runaway:N` + 最多 2 筆 `名稱(PID) X.XXc`，超出以 `+M` 表示（全紅） | 僅在偵測到持續失控的行程時出現；否則整行為 `''`，由 `buildOutput` 的 filter 略過 |
 
 判定：`速率(核) = (本次累計CPU秒 − 上次累計CPU秒) ÷ 間隔秒`；同一 PID 連續 5 次 ≥ 0.5 核才標記（間隔 60 秒，即持續 5 分鐘）。
-取樣來源 `tasklist /v /fo csv`，狀態存於 `~/.claude/leon-statusline/runaway-state.json`（跨 session 共用、原子寫入）。
+取樣來源 `powershell -NoProfile -NonInteractive -Command "… Get-Process …"`（實測 266–307ms；原定的 `tasklist /v /fo csv` 需 29–30 秒而恆逾時），狀態存於 `~/.claude/leon-statusline/runaway-state.json`（跨 session 共用、原子寫入）。
 只警告，絕不終止或改優先權。非 Windows 不顯示此行。
 ```
 
@@ -1051,7 +1131,7 @@ git commit -m "feat(statusline): 進入點注入失控行程守衛 + bump 1.5.0"
 - 觸發點在設定層：`typescript-language-server` v5.3.0 `cli.mjs:19105` 僅在 `initializationOptions.disableAutomaticTypingAcquisition` 為真、或 kind 為 `syntax`/`diagnostics` 時才加旗標；win-lsp 未設 → partialSemantic 那隻有、全語意那隻沒有。
 - A/B 實驗（`tools/ata-storm.mjs`，120 秒窗、家目錄 churn 8 檔/30 秒）：A 組（現況）<A> 秒 CPU；B 組（帶旗標）<B> 秒 CPU。判準 B ≤ A×0.2 且 B 速率 < 0.1 核。
 - 修法：win-lsp typescript 加 `initializationOptions.disableAutomaticTypingAcquisition`；刪除家目錄殘留的空 `node_modules`。
-- 守衛：`procscan.mjs`（tasklist 取樣）＋ `runaway.mjs`（`classify` 純判定 / `detect` 編排）＋ `cache.mjs` 跨 session 原子狀態檔 ＋ `renderLine5`。判定用區間速率而非瞬時值或生涯平均 —— 生涯平均會把「先閒置後失控」稀釋掉（實測 tsserver 35132 生涯僅 0.25 核但當下 1.0 核）；瞬時值則無法區分刻意的高載實驗。短命 spinner 因 PID 每輪更換而結構性排除，無須白名單。
+- 守衛：`procscan.mjs`（PowerShell `Get-Process` 取樣；原設計的 `tasklist /v /fo csv` 實測需 29–30 秒、恆超過 3 秒逾時，導致偵測器整合後從未成功取樣過，狀態檔 `procs` 恆為 `{}`，故於 Task 8b 更換）＋ `runaway.mjs`（`classify` 純判定 / `detect` 編排）＋ `cache.mjs` 跨 session 原子狀態檔 ＋ `renderLine5`。判定用區間速率而非瞬時值或生涯平均 —— 生涯平均會把「先閒置後失控」稀釋掉（實測 tsserver 35132 生涯僅 0.25 核但當下 1.0 核）；瞬時值則無法區分刻意的高載實驗。短命 spinner 因 PID 每輪更換而結構性排除，無須白名單。
 ```
 
 - [ ] **Step 4: `pitfalls.md` 新增第 12 條**
@@ -1072,7 +1152,7 @@ git commit -m "feat(statusline): 進入點注入失控行程守衛 + bump 1.5.0"
 在 `## src/（純函式邏輯，可獨立測）` 區塊的 `render.mjs` 那行**之前**插入兩行：
 
 ```
-- `procscan.mjs` — `parseTasklistCsv`（純解析）/ `sampleProcesses`（`tasklist /v /fo csv`；非 Windows 或任何失敗回 null）
+- `procscan.mjs` — `sampleProcesses`（`powershell -NoProfile -NonInteractive -Command` 跑 `Get-Process`，輸出 `<pid> <cpu秒> <行程名>`；非 Windows 或任何失敗回 null。註：`ProcessName` 不帶副檔名）
 - `runaway.mjs` — `classify`（純函式，區間速率判定持續失控）/ `detect`（編排：節流→取樣→判定→持久化，I/O 全注入）
 ```
 
@@ -1109,4 +1189,4 @@ git commit -m "docs: v1.5.0 失控行程守衛（attributes/journal §14/pitfall
 
 - **Spec coverage**：§3.1 win-lsp 改動→Task 1 Step 5–6；§3.2 A/B 實驗→Task 1 Step 1–4；§3.3 生效證據與收尾條件→Task 1 Step 4、Step 7；§4.1 判定公式→Task 4；§4.2 參數→Task 4 常數 + Global Constraints；§4.3 回測→Task 4 測試案例；§4.4 PID 重用→Task 4 案例 6–7；§5.1 procscan→Task 2+3；§5.2 runaway→Task 4；§5.3 狀態檔（跨 session／原子／節流／觸發者）→Task 5 + Task 6 + Task 8；§5.4 renderLine5→Task 7；§5.5 注入→Task 8；§6 錯誤處理→Task 3/5/6/7 各含不拋案例；§7 測試→Task 2–7；§8 版本文件→Task 8 Step 4 + Task 9。無缺口。
 - **Placeholder scan**：無 TBD/TODO；每個 code step 均附完整可貼上的程式碼。journal 的 `<A>`/`<B>` 是必須由 Task 1 實測填入的數據，已在 Task 9 Step 3 明示來源，非未定內容。
-- **Type consistency**：`parseTasklistCsv(text) → {pid,name,cpuSeconds}[]|null` 與 `sampleProcesses` 回傳、`classify(prev, sample, now, cfg)` 的 `sample` 元素、`prev.procs[pid] = {name,cpu,streak}`、`detect` 注入的 `sample()`、`deps.runaway() → {pid,name,rate}[]`、`renderLine5` 讀取的 `f.name/f.pid/f.rate` 全鏈一致。狀態檔 `{t, procs, flagged}` 在 Task 5/6/8 三處寫法相同。
+- **Type consistency**：`sampleProcesses` 回傳 `{pid,name,cpuSeconds}[]|null`（Task 8b 前另有 export 的 `parseTasklistCsv`，同型別；已刪除）、`classify(prev, sample, now, cfg)` 的 `sample` 元素、`prev.procs[pid] = {name,cpu,streak}`、`detect` 注入的 `sample()`、`deps.runaway() → {pid,name,rate}[]`、`renderLine5` 讀取的 `f.name/f.pid/f.rate` 全鏈一致。狀態檔 `{t, procs, flagged}` 在 Task 5/6/8 三處寫法相同。
