@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest'
 import { parseTasklistCsv, sampleProcesses } from '../src/procscan.mjs'
+import { classify } from '../src/runaway.mjs'
 
 const HEADER = '"Image Name","PID","Session Name","Session#","Mem Usage","Status","User Name","CPU Time","Window Title"'
 const row = (name, pid, cpu, title = 'N/A') =>
@@ -64,5 +65,24 @@ describe('sampleProcesses', () => {
   })
   it('輸出無法解析 → null', () => {
     expect(sampleProcesses({ platform: 'win32', exec: () => '亂碼' })).toBe(null)
+  })
+})
+
+// 釘住 procscan → classify 的跨模組欄位契約。這一段是進入點實際走的路
+// （statusline.mjs 的 deps.runaway 把 sampleProcesses 直接餵進 detect→classify），
+// 但兩邊的單元測試都用手寫字面量，所以協同改名可以全綠通過而功能無聲死亡：
+// sampleProcesses 的 cpuSeconds/pid/name 任一改名 → classify 的 valid() 會整批濾掉
+// → flagged 永遠是空的、狀態列永遠不警告。故這裡不寫死中間形狀，只驗端到端結果
+describe('procscan → classify 欄位契約', () => {
+  it('sampleProcesses 的真實輸出餵給 classify 能標出持續失控的行程（上游欄位改名要當場紅燈）', () => {
+    // 每 60 秒 CPU 增加 60 秒＝1 核，超過 RATE_THRESHOLD 0.5；連續 5 個區間後被標記
+    const sampleAt = i => sampleProcesses({
+      platform: 'win32',
+      exec: () => [HEADER, row('runaway.exe', 4242, `0:${String(i).padStart(2, '0')}:00`)].join('\n'),
+    })
+    let st = null
+    for (let i = 0; i <= 5; i++) st = classify(st, sampleAt(i), i * 60_000, {}).nextState
+    const { flagged } = classify(st, sampleAt(6), 6 * 60_000, {})
+    expect(flagged).toEqual([{ pid: 4242, name: 'runaway.exe', rate: 1 }])
   })
 })

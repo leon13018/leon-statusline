@@ -2,8 +2,8 @@
   "$schema": "https://json.schemastore.org/claude-code-plugin-manifest.json",
   "name": "leon-statusline",
   "displayName": "leon-statusline",
-  "version": "1.4.1",
-  "description": "Cross-platform 4-line Claude Code status line",
+  "version": "1.5.0",
+  "description": "Cross-platform 4-line Claude Code status line (+1 line when a runaway process is detected)",
   "author": { "name": "leon13018" },
   "license": "MIT"
 }
