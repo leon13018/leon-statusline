@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest'
+import { readFileSync } from 'node:fs'
 import { renderLine1, renderLine2, renderLine3, renderLine4, renderLine5, buildOutput } from '../src/render.mjs'
+import { classify } from '../src/runaway.mjs'
 
 const strip = s => s.replace(/\x1b\[[0-9;]*m/g, '')
 
@@ -197,9 +199,27 @@ describe('renderLine5 的全域限制', () => {
       expect(strip(buildOutput(d, { ...deps, runaway: broken }))).toBe(base)
     }
   })
+  // 這條只掃第 5 行的輸出。切勿改成掃整份 buildOutput：renderLine4 有 `skill:` 欄位，
+  // 正則裡的 kill 會立刻誤報。程式碼面的鎖是下一條靜態測試，不是這條。
   it('警告文字不得暗示或提供終止行程的手段', () => {
     const out = strip(renderLine5({}, { ...deps, runaway: () => [{ pid: 1, name: 'a.exe', rate: 1 }] }))
     expect(out).not.toMatch(/kill|terminate|stop|終止|結束|殺/i)
+  })
+  // 「只警告，絕不動手」是使用者在設計階段明確裁決的約束，光靠文字回歸鎖不住
+  // ——文字沒變但別處被加了終止程式碼，上一條照樣綠。故直接讀原始碼把它釘死。
+  it('render.mjs 原始碼不得含任何終止行程的手段', () => {
+    const src = readFileSync(new URL('../src/render.mjs', import.meta.url), 'utf8')
+    expect(src).not.toMatch(/child_process|taskkill|\bkill\(|process\.kill|SIGTERM|SIGKILL/)
+  })
+  // 釘住 renderLine5 與 classify 之間的欄位契約：render.test.mjs 其餘假資料都是手寫字面量，
+  // 上游把 {pid,name,rate} 改名的話 validFlag 會把每一列濾掉、警告無聲消失而測試全綠。
+  it('classify 實際產出的 flagged 形狀接得上 renderLine5（欄位改名要當場紅燈）', () => {
+    let st = null
+    const mk = cpu => [{ pid: 4242, name: 'node.exe', cpuSeconds: cpu }]
+    for (let i = 0; i <= 6; i++) st = classify(st, mk(i * 60), i * 60_000, {}).nextState
+    const { flagged } = classify(st, mk(7 * 60), 7 * 60_000, {})
+    expect(flagged.length).toBe(1)
+    expect(strip(renderLine5({}, { ...deps, runaway: () => flagged }))).toContain('node.exe(4242)')
   })
 })
 

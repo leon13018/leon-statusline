@@ -96,8 +96,11 @@ export function renderLine4(d, deps) {
   return joinLine(parts)
 }
 
-// flagged 的元素形狀來自磁碟狀態（可能損毀或被竄改），畸形列一律略過而非渲染成 '?'：
+// flagged 的元素形狀來自磁碟狀態（節流命中時 detect 直接回吐 state.flagged，未逐列重驗），
+// 損毀或被竄改時任意 JSON 垃圾都會進到這裡。畸形列一律略過而非渲染成 '?'：
 // 一則「零噪音」，二則沒有 PID／名稱的警告對使用者毫無用處
+// 判準刻意不重述 runaway.mjs 的 valid()：pid 放寬（不管整數／正負，印得出來就好）、
+// name 收緊（空字串印出來只是噪音）。兩處差異實務上皆不可達，但別把它當成上游語義的副本。
 const validFlag = f =>
   !!f && typeof f === 'object' &&
   Number.isFinite(f.pid) &&
