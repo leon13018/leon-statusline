@@ -96,7 +96,32 @@ export function renderLine4(d, deps) {
   return joinLine(parts)
 }
 
+// flagged 的元素形狀來自磁碟狀態（可能損毀或被竄改），畸形列一律略過而非渲染成 '?'：
+// 一則「零噪音」，二則沒有 PID／名稱的警告對使用者毫無用處
+const validFlag = f =>
+  !!f && typeof f === 'object' &&
+  Number.isFinite(f.pid) &&
+  typeof f.name === 'string' && f.name !== '' &&
+  Number.isFinite(f.rate)
+
+// 第 5 行：僅在偵測到持續失控的行程時出現；否則回 ''，由 buildOutput 的 filter 自動略過
+// 只提示，絕不提供也絕不執行任何終止行程的手段
+export function renderLine5(d, deps) {
+  let flagged = null
+  // try 只圈住外部注入的呼叫；其餘程式碼靠 validFlag 保證不會 throw，
+  // 免得自己的格式化 bug 被靜默吞掉
+  try { flagged = deps.runaway ? deps.runaway() : null } catch { flagged = null }
+  const rows = Array.isArray(flagged) ? flagged.filter(validFlag) : []
+  if (rows.length === 0) return ''
+  const shown = rows.slice(0, 2).map(f => `${f.name}(${f.pid}) ${f.rate.toFixed(2)}c`).join(', ')
+  const extra = rows.length > 2 ? ` +${rows.length - 2}` : ''
+  return joinLine([
+    colorize(`⚠ runaway:${rows.length}`, RED),
+    colorize(shown + extra, RED),
+  ])
+}
+
 export function buildOutput(d, deps) {
-  const lines = [renderLine1(d, deps), renderLine2(d, deps), renderLine3(d, deps), renderLine4(d, deps)]
+  const lines = [renderLine1(d, deps), renderLine2(d, deps), renderLine3(d, deps), renderLine4(d, deps), renderLine5(d, deps)]
   return lines.filter(l => l && l.length).join('\n')
 }
